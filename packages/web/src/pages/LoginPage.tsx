@@ -1,10 +1,13 @@
 import { type FormEvent, useState } from 'react';
 import { Navigate, useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
+import { LanguageSwitcher } from '../components/LanguageSwitcher';
 import { ApiError } from '../lib/api';
+import { useTranslation } from '../lib/i18n';
 
 export function LoginPage() {
 	const { user, login } = useAuthContext();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const [password, setPassword] = useState('');
 	const [error, setError] = useState<string | null>(null);
@@ -20,7 +23,15 @@ export function LoginPage() {
 			await login(password);
 			navigate('/links');
 		} catch (err) {
-			setError(err instanceof ApiError ? err.message : 'Login failed');
+			if (err instanceof ApiError) {
+				setError(
+					err.message === 'Invalid password'
+						? t('login.invalidPassword')
+						: err.message,
+				);
+			} else {
+				setError(t('login.failed'));
+			}
 		} finally {
 			setSubmitting(false);
 		}
@@ -32,13 +43,16 @@ export function LoginPage() {
 				onSubmit={handleSubmit}
 				className="w-full max-w-sm rounded-lg border bg-card p-8 shadow-sm"
 			>
-				<h1 className="mb-1 text-lg font-semibold">Trackable Links</h1>
+				<div className="mb-1 flex items-center justify-between">
+					<h1 className="text-lg font-semibold">Trackable Links</h1>
+					<LanguageSwitcher />
+				</div>
 				<p className="mb-6 text-sm text-muted-foreground">
-					Sign in with the admin password.
+					{t('login.subtitle')}
 				</p>
 
 				<label htmlFor="password" className="mb-1 block text-sm font-medium">
-					Password
+					{t('login.passwordLabel')}
 				</label>
 				<input
 					id="password"
@@ -57,7 +71,7 @@ export function LoginPage() {
 					disabled={submitting}
 					className="w-full rounded-md bg-primary py-2 text-sm font-semibold text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
 				>
-					{submitting ? 'Signing in…' : 'Sign in'}
+					{submitting ? t('login.signingIn') : t('login.signIn')}
 				</button>
 			</form>
 		</div>

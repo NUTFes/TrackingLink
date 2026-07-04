@@ -2,10 +2,13 @@ import { LinkIcon, LogOut, Plus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
+import { useTranslation } from '../lib/i18n';
 import { useAuthContext } from './AuthProvider';
+import { LanguageSwitcher } from './LanguageSwitcher';
 
 export function AppLayout({ children }: { children: ReactNode }) {
 	const { user, logout } = useAuthContext();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const permissions = user?.permissions ?? 0;
 
@@ -21,7 +24,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 						to="/links"
 						className="rounded-md px-3 py-2 text-sm font-medium hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 					>
-						Projects
+						{t('nav.projects')}
 					</Link>
 					{hasPermission(permissions, Permissions.TRACKABLE_LINKS_EDIT) && (
 						<Link
@@ -29,10 +32,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
 							className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 						>
 							<Plus className="h-4 w-4" />
-							New project
+							{t('nav.newProject')}
 						</Link>
 					)}
 				</nav>
+				<LanguageSwitcher className="mb-3 px-3" />
 				<button
 					type="button"
 					onClick={() => {
@@ -42,7 +46,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 					className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 				>
 					<LogOut className="h-4 w-4" />
-					Log out
+					{t('nav.logOut')}
 				</button>
 			</aside>
 			<main className="flex-1 overflow-y-auto">{children}</main>

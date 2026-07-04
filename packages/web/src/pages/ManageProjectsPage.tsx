@@ -15,6 +15,7 @@ import { PermissionGuard } from '../components/PermissionGuard';
 import { TRACABLE_LINKS_API_URL } from '../config';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
+import { useTranslation } from '../lib/i18n';
 
 interface Project {
 	id: string;
@@ -39,6 +40,7 @@ function Pagination({
 	total: number;
 	onPageChange: (page: number) => void;
 }) {
+	const { t } = useTranslation();
 	if (totalPages <= 1) return null;
 	const start = (currentPage - 1) * PAGE_SIZE + 1;
 	const end = Math.min(currentPage * PAGE_SIZE, total);
@@ -55,7 +57,7 @@ function Pagination({
 	return (
 		<div className="flex items-center justify-between border-t px-5 py-3">
 			<p className="text-xs text-muted-foreground">
-				{start}–{end} of {total}
+				{t('pagination.range', { start, end, total })}
 			</p>
 			<div className="flex items-center gap-1">
 				<button
@@ -113,6 +115,7 @@ function ProjectCard({
 	canDelete: boolean;
 	onDelete: () => void;
 }) {
+	const { t } = useTranslation();
 	return (
 		<div className="border-b last:border-0 px-4 py-4 hover:bg-muted/30 transition-colors">
 			<div className="flex items-start justify-between gap-2 mb-2">
@@ -143,7 +146,7 @@ function ProjectCard({
 						className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 transition-colors"
 					>
 						<QrCode className="h-3.5 w-3.5" />
-						QR codes
+						{t('projects.qrCodesLink')}
 					</Link>
 					{canAnalytics && (
 						<Link
@@ -151,7 +154,7 @@ function ProjectCard({
 							className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 transition-colors"
 						>
 							<BarChart2 className="h-3.5 w-3.5" />
-							Analytics
+							{t('projects.analyticsLink')}
 						</Link>
 					)}
 					{canDelete && (
@@ -161,7 +164,7 @@ function ProjectCard({
 							className="flex items-center gap-1 rounded-md border border-destructive/30 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
 						>
 							<Trash2 className="h-3.5 w-3.5" />
-							Delete
+							{t('common.delete')}
 						</button>
 					)}
 				</div>
@@ -172,6 +175,7 @@ function ProjectCard({
 
 function ManageProjectsContent() {
 	const { user } = useAuthContext();
+	const { t } = useTranslation();
 	const canEdit = hasPermission(
 		user?.permissions ?? 0,
 		Permissions.TRACKABLE_LINKS_EDIT,
@@ -191,33 +195,33 @@ function ManageProjectsContent() {
 	const [error, setError] = useState<string | null>(null);
 	const [currentPage, setCurrentPage] = useState(1);
 
-	const fetchProjects = useCallback(async (page: number) => {
-		setIsLoading(true);
-		setError(null);
-		try {
-			const res = await authFetch(
-				`${TRACABLE_LINKS_API_URL}/projects?page=${page}&limit=${PAGE_SIZE}`,
-			);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			const data = await res.json();
-			setProjects(Array.isArray(data.data) ? data.data : []);
-			setTotal(typeof data.total === 'number' ? data.total : 0);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : 'Something went wrong');
-		} finally {
-			setIsLoading(false);
-		}
-	}, []);
+	const fetchProjects = useCallback(
+		async (page: number) => {
+			setIsLoading(true);
+			setError(null);
+			try {
+				const res = await authFetch(
+					`${TRACABLE_LINKS_API_URL}/projects?page=${page}&limit=${PAGE_SIZE}`,
+				);
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				const data = await res.json();
+				setProjects(Array.isArray(data.data) ? data.data : []);
+				setTotal(typeof data.total === 'number' ? data.total : 0);
+			} catch (e) {
+				setError(e instanceof Error ? e.message : t('common.genericError'));
+			} finally {
+				setIsLoading(false);
+			}
+		},
+		[t],
+	);
 
 	useEffect(() => {
 		fetchProjects(currentPage);
 	}, [fetchProjects, currentPage]);
 
 	const handleDeleteProject = async (projectId: string) => {
-		if (
-			!confirm('Delete this project? All of its QR codes will be deleted too.')
-		)
-			return;
+		if (!confirm(t('projects.deleteConfirm'))) return;
 		try {
 			const res = await authFetch(
 				`${TRACABLE_LINKS_API_URL}/projects/${projectId}`,
@@ -226,7 +230,7 @@ function ManageProjectsContent() {
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			await fetchProjects(currentPage);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : 'Failed to delete the project');
+			setError(e instanceof Error ? e.message : t('projects.deleteFailed'));
 		}
 	};
 
@@ -235,14 +239,16 @@ function ManageProjectsContent() {
 	return (
 		<div className="container mx-auto max-w-6xl p-4 md:p-6">
 			<div className="mb-6 flex items-center justify-between gap-3">
-				<h1 className="text-xl md:text-2xl font-bold">Trackable Links</h1>
+				<h1 className="text-xl md:text-2xl font-bold">
+					{t('projects.heading')}
+				</h1>
 				{canEdit && (
 					<Link
 						to="/links/create"
 						className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 md:px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
 					>
 						<Plus className="h-4 w-4" />
-						New project
+						{t('nav.newProject')}
 					</Link>
 				)}
 			</div>
@@ -255,9 +261,11 @@ function ManageProjectsContent() {
 
 			<div className="rounded-lg border bg-card shadow-sm">
 				<div className="border-b p-4 md:p-5">
-					<h2 className="font-semibold">Projects</h2>
+					<h2 className="font-semibold">{t('projects.cardTitle')}</h2>
 					<p className="mt-0.5 text-sm text-muted-foreground">
-						{isLoading ? 'Loading…' : `${total} total`}
+						{isLoading
+							? t('common.loading')
+							: t('common.totalCount', { total })}
 					</p>
 				</div>
 
@@ -273,7 +281,7 @@ function ManageProjectsContent() {
 					</div>
 				) : projects.length === 0 ? (
 					<p className="px-5 py-10 text-center text-sm text-muted-foreground">
-						No projects yet.
+						{t('projects.empty')}
 					</p>
 				) : (
 					<>
@@ -296,19 +304,19 @@ function ManageProjectsContent() {
 								<thead>
 									<tr className="border-b bg-muted/50">
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Name
+											{t('common.name')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Destination URL
+											{t('common.destinationUrl')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Scans
+											{t('common.scans')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Created
+											{t('common.created')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Actions
+											{t('common.actions')}
 										</th>
 									</tr>
 								</thead>
@@ -350,7 +358,7 @@ function ManageProjectsContent() {
 														className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
 													>
 														<QrCode className="h-3 w-3" />
-														QR codes
+														{t('projects.qrCodesLink')}
 													</Link>
 													{canAnalytics && (
 														<Link
@@ -358,7 +366,7 @@ function ManageProjectsContent() {
 															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
 														>
 															<BarChart2 className="h-3 w-3" />
-															Analytics
+															{t('projects.analyticsLink')}
 														</Link>
 													)}
 													{canDelete && (
@@ -370,7 +378,7 @@ function ManageProjectsContent() {
 															className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
 														>
 															<Trash2 className="h-3 w-3" />
-															Delete
+															{t('common.delete')}
 														</button>
 													)}
 												</div>

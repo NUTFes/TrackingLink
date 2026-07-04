@@ -6,9 +6,11 @@ import { PermissionGuard } from '../components/PermissionGuard';
 import { TRACABLE_LINKS_API_URL } from '../config';
 import { Permissions } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
+import { useTranslation } from '../lib/i18n';
 
 function CreateProjectForm() {
 	const { user } = useAuthContext();
+	const { t } = useTranslation();
 	const navigate = useNavigate();
 	const [projectName, setProjectName] = useState('');
 	const [destinationUrl, setDestinationUrl] = useState('');
@@ -41,7 +43,7 @@ function CreateProjectForm() {
 			}
 			navigate('/links');
 		} catch (e) {
-			setError(e instanceof Error ? e.message : 'Something went wrong');
+			setError(e instanceof Error ? e.message : t('common.genericError'));
 		} finally {
 			setIsSubmitting(false);
 		}
@@ -55,15 +57,15 @@ function CreateProjectForm() {
 					className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
 				>
 					<ArrowLeft className="h-4 w-4" />
-					Back to projects
+					{t('common.backToProjects')}
 				</Link>
 			</div>
 
 			<div className="rounded-lg border bg-card shadow-sm">
 				<div className="border-b p-5">
-					<h1 className="text-xl font-bold">New project</h1>
+					<h1 className="text-xl font-bold">{t('createProject.heading')}</h1>
 					<p className="mt-0.5 text-sm text-muted-foreground">
-						Create a new Trackable Links project
+						{t('createProject.subtitle')}
 					</p>
 				</div>
 
@@ -76,14 +78,15 @@ function CreateProjectForm() {
 
 					<div className="space-y-1.5">
 						<label htmlFor="projectName" className="block text-sm font-medium">
-							Project name <span className="text-destructive">*</span>
+							{t('createProject.nameLabel')}{' '}
+							<span className="text-destructive">*</span>
 						</label>
 						<input
 							id="projectName"
 							type="text"
 							value={projectName}
 							onChange={(e) => setProjectName(e.target.value)}
-							placeholder="e.g. Flyer campaign"
+							placeholder={t('createProject.namePlaceholder')}
 							required
 							className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
 						/>
@@ -94,14 +97,15 @@ function CreateProjectForm() {
 							htmlFor="destinationUrl"
 							className="block text-sm font-medium"
 						>
-							Destination URL <span className="text-destructive">*</span>
+							{t('createProject.urlLabel')}{' '}
+							<span className="text-destructive">*</span>
 						</label>
 						<input
 							id="destinationUrl"
 							type="url"
 							value={destinationUrl}
 							onChange={(e) => setDestinationUrl(e.target.value)}
-							placeholder="https://example.com"
+							placeholder={t('createProject.urlPlaceholder')}
 							required
 							className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
 						/>
@@ -116,13 +120,15 @@ function CreateProjectForm() {
 							className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
 						>
 							{isSubmitting && <Loader className="h-4 w-4 animate-spin" />}
-							{isSubmitting ? 'Creating…' : 'Create project'}
+							{isSubmitting
+								? t('createProject.creating')
+								: t('createProject.submit')}
 						</button>
 						<Link
 							to="/links"
 							className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted/50 transition-colors"
 						>
-							Cancel
+							{t('common.cancel')}
 						</Link>
 					</div>
 				</form>

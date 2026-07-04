@@ -27,6 +27,7 @@ import { PermissionGuard } from '../components/PermissionGuard';
 import { TRACABLE_LINKS_API_URL } from '../config';
 import { Permissions } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
+import { useTranslation } from '../lib/i18n';
 
 interface AccessLog {
 	qrId: string;
@@ -139,6 +140,7 @@ function Pagination({
 	total: number;
 	onPageChange: (page: number) => void;
 }) {
+	const { t } = useTranslation();
 	if (totalPages <= 1) return null;
 	const start = (currentPage - 1) * LOG_PAGE_SIZE + 1;
 	const end = Math.min(currentPage * LOG_PAGE_SIZE, total);
@@ -155,7 +157,7 @@ function Pagination({
 	return (
 		<div className="flex items-center justify-between border-t px-5 py-3">
 			<p className="text-xs text-muted-foreground">
-				{start}–{end} of {total}
+				{t('pagination.range', { start, end, total })}
 			</p>
 			<div className="flex items-center gap-1">
 				<button
@@ -204,6 +206,7 @@ function Pagination({
 
 function ProjectAnalyticsContent() {
 	const { id } = useParams<{ id: string }>();
+	const { t } = useTranslation();
 	const [projectName, setProjectName] = useState<string>('');
 	const [stats, setStats] = useState<StatRow[]>([]);
 	const [logs, setLogs] = useState<AccessLog[]>([]);
@@ -229,11 +232,11 @@ function ProjectAnalyticsContent() {
 			const data = await statsRes.json();
 			setStats(Array.isArray(data) ? data : []);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : 'Something went wrong');
+			setError(e instanceof Error ? e.message : t('common.genericError'));
 		} finally {
 			setIsLoadingStats(false);
 		}
-	}, [id]);
+	}, [id, t]);
 
 	const fetchLogs = useCallback(
 		async (page: number) => {
@@ -248,12 +251,12 @@ function ProjectAnalyticsContent() {
 				setLogs(Array.isArray(data.data) ? data.data : []);
 				setLogTotal(typeof data.total === 'number' ? data.total : 0);
 			} catch (e) {
-				setError(e instanceof Error ? e.message : 'Something went wrong');
+				setError(e instanceof Error ? e.message : t('common.genericError'));
 			} finally {
 				setIsLoadingLogs(false);
 			}
 		},
-		[id],
+		[id, t],
 	);
 
 	useEffect(() => {
@@ -314,15 +317,18 @@ function ProjectAnalyticsContent() {
 					className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
 				>
 					<ArrowLeft className="h-4 w-4" />
-					Back to projects
+					{t('common.backToProjects')}
 				</Link>
 			</div>
 
 			<div>
-				<h1 className="text-2xl font-bold">Analytics</h1>
+				<h1 className="text-2xl font-bold">{t('analytics.heading')}</h1>
 				{projectName && (
 					<p className="mt-1 text-sm text-muted-foreground">
-						Project: {projectName} — {totalScans.toLocaleString()} scans total
+						{t('analytics.summary', {
+							name: projectName,
+							count: totalScans.toLocaleString(),
+						})}
 					</p>
 				)}
 			</div>
@@ -339,13 +345,13 @@ function ProjectAnalyticsContent() {
 				</div>
 			) : stats.length === 0 && logTotal === 0 ? (
 				<div className="rounded-lg border bg-card p-12 text-center text-muted-foreground">
-					No scans yet.
+					{t('analytics.empty')}
 				</div>
 			) : (
 				<>
 					<Accordion
-						title="Scans by hour and location"
-						description="Which hours and locations get scanned most"
+						title={t('analytics.hourChartTitle')}
+						description={t('analytics.hourChartDesc')}
 					>
 						<div className="p-5">
 							{locations.length > 0 && (
@@ -408,8 +414,8 @@ function ProjectAnalyticsContent() {
 					</Accordion>
 
 					<Accordion
-						title="Scans by location"
-						description="Total scans per installed location"
+						title={t('analytics.locationChartTitle')}
+						description={t('analytics.locationChartDesc')}
 					>
 						<div className="p-5">
 							<ResponsiveContainer width="100%" height={220}>
@@ -437,7 +443,11 @@ function ProjectAnalyticsContent() {
 										className="fill-muted-foreground"
 									/>
 									<Tooltip content={<BarTooltip />} />
-									<Bar dataKey="count" name="Scans" radius={[0, 3, 3, 0]}>
+									<Bar
+										dataKey="count"
+										name={t('common.scans')}
+										radius={[0, 3, 3, 0]}
+									>
 										{locationTotals.map((_, i) => (
 											<Cell
 												key={`cell-${i}`}
@@ -451,8 +461,8 @@ function ProjectAnalyticsContent() {
 					</Accordion>
 
 					<Accordion
-						title="Scan history"
-						description={`${logTotal.toLocaleString()} total`}
+						title={t('analytics.historyTitle')}
+						description={t('common.totalCount', { total: logTotal })}
 					>
 						{isLoadingLogs ? (
 							<div className="flex items-center justify-center py-16">
@@ -460,7 +470,7 @@ function ProjectAnalyticsContent() {
 							</div>
 						) : logs.length === 0 ? (
 							<p className="px-5 py-8 text-center text-sm text-muted-foreground">
-								No scans yet.
+								{t('analytics.empty')}
 							</p>
 						) : (
 							<>
@@ -492,16 +502,16 @@ function ProjectAnalyticsContent() {
 										<thead>
 											<tr className="border-b bg-muted/50">
 												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-													Location
+													{t('common.location')}
 												</th>
 												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-													Time
+													{t('common.time')}
 												</th>
 												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-													QR ID
+													{t('common.qrId')}
 												</th>
 												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-													IP
+													{t('common.ip')}
 												</th>
 											</tr>
 										</thead>

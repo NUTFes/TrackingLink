@@ -23,6 +23,7 @@ import { PermissionGuard } from '../components/PermissionGuard';
 import { TRACABLE_LINKS_API_URL } from '../config';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
+import { useTranslation } from '../lib/i18n';
 
 interface QRCode {
 	id: string;
@@ -71,6 +72,7 @@ function useQRDataUrl(text: string): {
 }
 
 function QRDialog({ qr, onClose }: { qr: QRCode; onClose: () => void }) {
+	const { t } = useTranslation();
 	const url = `${FWD_BASE_URL}/?id=${qr.id}`;
 	const { dataUrl: qrDataUrl, error: qrError } = useQRDataUrl(url);
 
@@ -82,14 +84,14 @@ function QRDialog({ qr, onClose }: { qr: QRCode; onClose: () => void }) {
 			<div
 				role="dialog"
 				aria-modal="true"
-				aria-label="QR code"
+				aria-label={t('qrCodes.dialogTitle')}
 				className="relative rounded-lg border bg-card p-6 shadow-xl w-full max-w-sm mx-4"
 				onClick={(e) => e.stopPropagation()}
 				onKeyDown={(e) => e.stopPropagation()}
 			>
 				<div className="flex items-center justify-between mb-4">
 					<div>
-						<h3 className="font-semibold">QR code</h3>
+						<h3 className="font-semibold">{t('qrCodes.dialogTitle')}</h3>
 						<p className="text-xs text-muted-foreground mt-0.5">
 							{qr.location}
 						</p>
@@ -97,7 +99,7 @@ function QRDialog({ qr, onClose }: { qr: QRCode; onClose: () => void }) {
 					<button
 						type="button"
 						onClick={onClose}
-						aria-label="Close"
+						aria-label={t('common.close')}
 						className="rounded-md p-1 hover:bg-muted/50 transition-colors"
 					>
 						<X className="h-4 w-4 text-muted-foreground" />
@@ -111,13 +113,13 @@ function QRDialog({ qr, onClose }: { qr: QRCode; onClose: () => void }) {
 						)}
 						{qrError && (
 							<p className="text-xs text-destructive px-4 text-center">
-								Failed to generate the QR code
+								{t('qrCodes.generateFailed')}
 							</p>
 						)}
 						{qrDataUrl && (
 							<img
 								src={qrDataUrl}
-								alt="QR code"
+								alt={t('qrCodes.dialogTitle')}
 								className="h-full w-full rounded-md object-contain"
 							/>
 						)}
@@ -133,7 +135,7 @@ function QRDialog({ qr, onClose }: { qr: QRCode; onClose: () => void }) {
 						download={`qr-${qr.id}.png`}
 						className="mt-5 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
 					>
-						Download PNG
+						{t('qrCodes.downloadButton')}
 					</a>
 				)}
 			</div>
@@ -152,6 +154,7 @@ function Pagination({
 	total: number;
 	onPageChange: (page: number) => void;
 }) {
+	const { t } = useTranslation();
 	if (totalPages <= 1) return null;
 	const start = (currentPage - 1) * PAGE_SIZE + 1;
 	const end = Math.min(currentPage * PAGE_SIZE, total);
@@ -168,7 +171,7 @@ function Pagination({
 	return (
 		<div className="flex items-center justify-between border-t px-5 py-3">
 			<p className="text-xs text-muted-foreground">
-				{start}–{end} of {total}
+				{t('pagination.range', { start, end, total })}
 			</p>
 			<div className="flex items-center gap-1">
 				<button
@@ -226,6 +229,7 @@ function QRCard({
 	onDelete: () => void;
 	canDeleteThis: boolean;
 }) {
+	const { t } = useTranslation();
 	return (
 		<div className="border-b last:border-0 px-4 py-4 hover:bg-muted/30 transition-colors">
 			<div className="flex items-start justify-between gap-2 mb-3">
@@ -244,7 +248,7 @@ function QRCard({
 					className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
 				>
 					<QrCode className="h-3.5 w-3.5" />
-					Show QR
+					{t('qrCodes.showButton')}
 				</button>
 				{canDeleteThis && (
 					<button
@@ -253,7 +257,7 @@ function QRCard({
 						className="flex items-center gap-1.5 rounded-md border border-destructive/30 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
 					>
 						<Trash2 className="h-3.5 w-3.5" />
-						Delete
+						{t('common.delete')}
 					</button>
 				)}
 			</div>
@@ -263,6 +267,7 @@ function QRCard({
 
 function QRCodesContent() {
 	const { user } = useAuthContext();
+	const { t } = useTranslation();
 	const canEdit = hasPermission(
 		user?.permissions ?? 0,
 		Permissions.TRACKABLE_LINKS_EDIT,
@@ -307,12 +312,12 @@ function QRCodesContent() {
 				setQrCodes(Array.isArray(data.data) ? data.data : []);
 				setTotal(typeof data.total === 'number' ? data.total : 0);
 			} catch (e) {
-				setError(e instanceof Error ? e.message : 'Something went wrong');
+				setError(e instanceof Error ? e.message : t('common.genericError'));
 			} finally {
 				setIsLoading(false);
 			}
 		},
-		[projectId],
+		[projectId, t],
 	);
 
 	useEffect(() => {
@@ -341,15 +346,14 @@ function QRCodesContent() {
 				setCurrentPage(1);
 			}
 		} catch (e) {
-			setError(e instanceof Error ? e.message : 'Failed to create the QR code');
+			setError(e instanceof Error ? e.message : t('qrCodes.createFailed'));
 		} finally {
 			setIsCreating(false);
 		}
 	};
 
 	const handleDelete = async (qrId: string) => {
-		if (!confirm('Delete this QR code? Its scan history will be deleted too.'))
-			return;
+		if (!confirm(t('qrCodes.deleteConfirm'))) return;
 		try {
 			const res = await authFetch(
 				`${TRACABLE_LINKS_API_URL}/projects/qrcodes/${qrId}`,
@@ -366,7 +370,7 @@ function QRCodesContent() {
 			}
 			setTotal(newTotal);
 		} catch (e) {
-			setError(e instanceof Error ? e.message : 'Failed to delete');
+			setError(e instanceof Error ? e.message : t('qrCodes.deleteFailed'));
 		}
 	};
 
@@ -383,16 +387,18 @@ function QRCodesContent() {
 					className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
 				>
 					<ArrowLeft className="h-4 w-4" />
-					Back to projects
+					{t('common.backToProjects')}
 				</Link>
 			</div>
 
 			<div className="mb-6 flex items-start justify-between gap-3">
 				<div>
-					<h1 className="text-xl md:text-2xl font-bold">QR codes</h1>
+					<h1 className="text-xl md:text-2xl font-bold">
+						{t('qrCodes.heading')}
+					</h1>
 					{project && (
 						<p className="mt-1 text-sm text-muted-foreground">
-							Project: {project.name}
+							{t('qrCodes.projectLabel', { name: project.name })}
 						</p>
 					)}
 				</div>
@@ -403,7 +409,7 @@ function QRCodesContent() {
 						className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 md:px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
 					>
 						<Plus className="h-4 w-4" />
-						New QR code
+						{t('qrCodes.newButton')}
 					</button>
 				)}
 			</div>
@@ -416,19 +422,18 @@ function QRCodesContent() {
 
 			{canEdit && showCreateForm && (
 				<div className="mb-6 rounded-lg border bg-card p-4 md:p-5 shadow-sm">
-					<h2 className="mb-4 font-semibold">New QR code</h2>
+					<h2 className="mb-4 font-semibold">{t('qrCodes.newFormTitle')}</h2>
 					<form onSubmit={handleCreate} className="flex items-end gap-3">
 						<div className="flex-1 space-y-1.5">
 							<label htmlFor="location" className="block text-sm font-medium">
-								Location (optional — can be set later by scanning the printed
-								code)
+								{t('qrCodes.locationLabel')}
 							</label>
 							<input
 								id="location"
 								type="text"
 								value={newLocation}
 								onChange={(e) => setNewLocation(e.target.value)}
-								placeholder="e.g. Main entrance, Building A"
+								placeholder={t('qrCodes.locationPlaceholder')}
 								className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
 							/>
 						</div>
@@ -438,7 +443,7 @@ function QRCodesContent() {
 							className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
 						>
 							{isCreating && <Loader className="h-4 w-4 animate-spin" />}
-							Add
+							{t('common.add')}
 						</button>
 					</form>
 				</div>
@@ -446,9 +451,11 @@ function QRCodesContent() {
 
 			<div className="rounded-lg border bg-card shadow-sm">
 				<div className="border-b p-4 md:p-5">
-					<h2 className="font-semibold">QR codes</h2>
+					<h2 className="font-semibold">{t('qrCodes.cardTitle')}</h2>
 					<p className="mt-0.5 text-sm text-muted-foreground">
-						{isLoading ? 'Loading…' : `${total} total`}
+						{isLoading
+							? t('common.loading')
+							: t('common.totalCount', { total })}
 					</p>
 				</div>
 
@@ -458,7 +465,7 @@ function QRCodesContent() {
 					</div>
 				) : qrCodes.length === 0 ? (
 					<p className="px-5 py-10 text-center text-sm text-muted-foreground">
-						No QR codes yet.
+						{t('qrCodes.empty')}
 					</p>
 				) : (
 					<>
@@ -481,16 +488,16 @@ function QRCodesContent() {
 								<thead>
 									<tr className="border-b bg-muted/50">
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											QR ID
+											{t('qrCodes.qrIdHeader')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Location
+											{t('common.location')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Created
+											{t('common.created')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											Actions
+											{t('common.actions')}
 										</th>
 									</tr>
 								</thead>
@@ -522,7 +529,7 @@ function QRCodesContent() {
 														className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
 													>
 														<QrCode className="h-3 w-3" />
-														Show
+														{t('common.show')}
 													</button>
 													{canDeleteQR(qr) && (
 														<button
@@ -531,7 +538,7 @@ function QRCodesContent() {
 															className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
 														>
 															<Trash2 className="h-3 w-3" />
-															Delete
+															{t('common.delete')}
 														</button>
 													)}
 												</div>
