@@ -1,32 +1,32 @@
 import { LinkIcon, LogOut, Plus } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { Permissions, hasPermission } from '../lib/permissions';
-import { useAuth } from './AuthProvider';
+import { Permissions, hasPermission } from '../hooks/useStaffAuth';
+import { useAuthContext } from './AuthProvider';
 
 export function AppLayout({ children }: { children: ReactNode }) {
-	const { user, logout } = useAuth();
+	const { user, logout } = useAuthContext();
 	const navigate = useNavigate();
 	const permissions = user?.permissions ?? 0;
 
 	return (
-		<div className="flex h-screen bg-slate-50">
-			<aside className="flex w-56 flex-col border-r border-slate-200 bg-white p-4">
-				<div className="mb-6 flex items-center gap-2 px-2 font-semibold text-slate-900">
-					<LinkIcon className="h-5 w-5 text-blue-600" />
+		<div className="flex h-screen bg-background">
+			<aside className="flex w-60 flex-col border-r border-sidebar-border bg-sidebar p-4 text-sidebar-foreground">
+				<div className="mb-6 flex items-center gap-2 px-2 font-semibold">
+					<LinkIcon className="h-5 w-5 text-sidebar-primary" />
 					Trackable Links
 				</div>
 				<nav className="flex flex-1 flex-col gap-1">
 					<Link
-						to="/"
-						className="rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+						to="/links"
+						className="rounded-md px-3 py-2 text-sm font-medium hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 					>
 						Projects
 					</Link>
 					{hasPermission(permissions, Permissions.TRACKABLE_LINKS_EDIT) && (
 						<Link
-							to="/create"
-							className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100"
+							to="/links/create"
+							className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 						>
 							<Plus className="h-4 w-4" />
 							New project
@@ -39,7 +39,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 						logout();
 						navigate('/login');
 					}}
-					className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-slate-500 hover:bg-slate-100"
+					className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-sidebar-foreground/70 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
 				>
 					<LogOut className="h-4 w-4" />
 					Log out

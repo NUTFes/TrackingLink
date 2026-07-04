@@ -1,158 +1,403 @@
-import { BarChart3, QrCode, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import {
+	BarChart2,
+	ChevronLeft,
+	ChevronRight,
+	ExternalLink,
+	Plus,
+	QrCode,
+	ScanLine,
+	Trash2,
+} from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { useAuth } from '../components/AuthProvider';
-import { apiFetch } from '../lib/api';
-import { Permissions, hasPermission } from '../lib/permissions';
+import { useAuthContext } from '../components/AuthProvider';
+import { PermissionGuard } from '../components/PermissionGuard';
+import { TRACABLE_LINKS_API_URL } from '../config';
+import { Permissions, hasPermission } from '../hooks/useStaffAuth';
+import { authFetch } from '../lib/api';
 
 interface Project {
 	id: string;
 	name: string;
 	destinationUrl: string;
 	createdAt: string;
+	adminUserId: string;
+	projectId: string;
 	accessCount: number;
 }
 
 const PAGE_SIZE = 10;
 
-export function ManageProjectsPage() {
-	const { user } = useAuth();
-	const permissions = user?.permissions ?? 0;
+function Pagination({
+	currentPage,
+	totalPages,
+	total,
+	onPageChange,
+}: {
+	currentPage: number;
+	totalPages: number;
+	total: number;
+	onPageChange: (page: number) => void;
+}) {
+	if (totalPages <= 1) return null;
+	const start = (currentPage - 1) * PAGE_SIZE + 1;
+	const end = Math.min(currentPage * PAGE_SIZE, total);
+	const pages = Array.from({ length: totalPages }, (_, i) => i + 1)
+		.filter(
+			(p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1,
+		)
+		.reduce<(number | '…')[]>((acc, p, idx, arr) => {
+			if (idx > 0 && (arr[idx - 1] as number) < p - 1) acc.push('…');
+			acc.push(p);
+			return acc;
+		}, []);
+
+	return (
+		<div className="flex items-center justify-between border-t px-5 py-3">
+			<p className="text-xs text-muted-foreground">
+				{start}–{end} of {total}
+			</p>
+			<div className="flex items-center gap-1">
+				<button
+					type="button"
+					onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+					disabled={currentPage === 1}
+					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+				>
+					<ChevronLeft className="h-4 w-4" />
+				</button>
+				{pages.map((p, idx) =>
+					p === '…' ? (
+						<span
+							key={`ellipsis-${idx}`}
+							className="px-1 text-xs text-muted-foreground"
+						>
+							…
+						</span>
+					) : (
+						<button
+							key={p}
+							type="button"
+							onClick={() => onPageChange(p as number)}
+							className={`h-7 min-w-7 rounded-md border px-2 text-xs transition-colors ${
+								currentPage === p
+									? 'bg-primary text-primary-foreground border-primary'
+									: 'hover:bg-muted/50'
+							}`}
+						>
+							{p}
+						</button>
+					),
+				)}
+				<button
+					type="button"
+					onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+					disabled={currentPage === totalPages}
+					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+				>
+					<ChevronRight className="h-4 w-4" />
+				</button>
+			</div>
+		</div>
+	);
+}
+
+function ProjectCard({
+	project,
+	canAnalytics,
+	canDelete,
+	onDelete,
+}: {
+	project: Project;
+	canAnalytics: boolean;
+	canDelete: boolean;
+	onDelete: () => void;
+}) {
+	return (
+		<div className="border-b last:border-0 px-4 py-4 hover:bg-muted/30 transition-colors">
+			<div className="flex items-start justify-between gap-2 mb-2">
+				<p className="font-medium text-sm leading-snug">{project.name}</p>
+				<span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums shrink-0">
+					<ScanLine className="h-3.5 w-3.5" />
+					{project.accessCount.toLocaleString()}
+				</span>
+			</div>
+			<a
+				href={project.destinationUrl}
+				target="_blank"
+				rel="noopener noreferrer"
+				className="flex items-center gap-1 text-xs text-primary hover:underline mb-3 min-w-0"
+			>
+				<span className="truncate">{project.destinationUrl}</span>
+				<ExternalLink className="h-3 w-3 shrink-0" />
+			</a>
+			<div className="flex items-center justify-between">
+				<span className="text-xs text-muted-foreground">
+					{project.createdAt
+						? new Date(project.createdAt).toLocaleDateString()
+						: '-'}
+				</span>
+				<div className="flex items-center gap-2">
+					<Link
+						to={`/links/${project.projectId}/qrcodes`}
+						className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+					>
+						<QrCode className="h-3.5 w-3.5" />
+						QR codes
+					</Link>
+					{canAnalytics && (
+						<Link
+							to={`/links/${project.projectId}/analytics`}
+							className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+						>
+							<BarChart2 className="h-3.5 w-3.5" />
+							Analytics
+						</Link>
+					)}
+					{canDelete && (
+						<button
+							type="button"
+							onClick={onDelete}
+							className="flex items-center gap-1 rounded-md border border-destructive/30 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+						>
+							<Trash2 className="h-3.5 w-3.5" />
+							Delete
+						</button>
+					)}
+				</div>
+			</div>
+		</div>
+	);
+}
+
+function ManageProjectsContent() {
+	const { user } = useAuthContext();
+	const canEdit = hasPermission(
+		user?.permissions ?? 0,
+		Permissions.TRACKABLE_LINKS_EDIT,
+	);
+	const canAnalytics = hasPermission(
+		user?.permissions ?? 0,
+		Permissions.TRACKABLE_LINKS_ANALYTICS,
+	);
+	const canDelete = hasPermission(
+		user?.permissions ?? 0,
+		Permissions.TRACKABLE_LINKS_DELETE,
+	);
+
 	const [projects, setProjects] = useState<Project[]>([]);
 	const [total, setTotal] = useState(0);
-	const [page, setPage] = useState(1);
-	const [loading, setLoading] = useState(true);
+	const [isLoading, setIsLoading] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+	const [currentPage, setCurrentPage] = useState(1);
 
-	async function load() {
-		setLoading(true);
-		const res = await apiFetch<{ data: Project[]; total: number }>(
-			`/projects?page=${page}&limit=${PAGE_SIZE}`,
-		);
-		setProjects(res.data);
-		setTotal(res.total);
-		setLoading(false);
-	}
+	const fetchProjects = useCallback(async (page: number) => {
+		setIsLoading(true);
+		setError(null);
+		try {
+			const res = await authFetch(
+				`${TRACABLE_LINKS_API_URL}/projects?page=${page}&limit=${PAGE_SIZE}`,
+			);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const data = await res.json();
+			setProjects(Array.isArray(data.data) ? data.data : []);
+			setTotal(typeof data.total === 'number' ? data.total : 0);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : 'Something went wrong');
+		} finally {
+			setIsLoading(false);
+		}
+	}, []);
 
 	useEffect(() => {
-		load();
-		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [page]);
+		fetchProjects(currentPage);
+	}, [fetchProjects, currentPage]);
 
-	async function handleDelete(id: string) {
-		if (!confirm('Delete this project and all of its QR codes?')) return;
-		await apiFetch(`/projects/${id}`, { method: 'DELETE' });
-		load();
-	}
+	const handleDeleteProject = async (projectId: string) => {
+		if (
+			!confirm('Delete this project? All of its QR codes will be deleted too.')
+		)
+			return;
+		try {
+			const res = await authFetch(
+				`${TRACABLE_LINKS_API_URL}/projects/${projectId}`,
+				{ method: 'DELETE' },
+			);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			await fetchProjects(currentPage);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : 'Failed to delete the project');
+		}
+	};
 
 	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
 
 	return (
-		<div className="p-8">
-			<h1 className="mb-6 text-xl font-semibold text-slate-900">Projects</h1>
+		<div className="container mx-auto max-w-6xl p-4 md:p-6">
+			<div className="mb-6 flex items-center justify-between gap-3">
+				<h1 className="text-xl md:text-2xl font-bold">Trackable Links</h1>
+				{canEdit && (
+					<Link
+						to="/links/create"
+						className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 md:px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
+					>
+						<Plus className="h-4 w-4" />
+						New project
+					</Link>
+				)}
+			</div>
 
-			{loading ? (
-				<p className="text-slate-500">Loading…</p>
-			) : projects.length === 0 ? (
-				<p className="text-slate-500">No projects yet.</p>
-			) : (
-				<div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-					<table className="w-full text-left text-sm">
-						<thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
-							<tr>
-								<th className="px-4 py-3 font-medium">Name</th>
-								<th className="px-4 py-3 font-medium">Destination URL</th>
-								<th className="px-4 py-3 font-medium">Scans</th>
-								<th className="px-4 py-3 font-medium">Created</th>
-								<th className="px-4 py-3" />
-							</tr>
-						</thead>
-						<tbody className="divide-y divide-slate-100">
+			{error && (
+				<div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4">
+					<p className="text-sm text-destructive">{error}</p>
+				</div>
+			)}
+
+			<div className="rounded-lg border bg-card shadow-sm">
+				<div className="border-b p-4 md:p-5">
+					<h2 className="font-semibold">Projects</h2>
+					<p className="mt-0.5 text-sm text-muted-foreground">
+						{isLoading ? 'Loading…' : `${total} total`}
+					</p>
+				</div>
+
+				{isLoading ? (
+					<div className="divide-y">
+						{Array.from({ length: 5 }).map((_, i) => (
+							<div key={i} className="px-4 py-4 animate-pulse space-y-2">
+								<div className="h-4 w-40 rounded bg-muted" />
+								<div className="h-3 w-56 rounded bg-muted" />
+								<div className="h-3 w-24 rounded bg-muted" />
+							</div>
+						))}
+					</div>
+				) : projects.length === 0 ? (
+					<p className="px-5 py-10 text-center text-sm text-muted-foreground">
+						No projects yet.
+					</p>
+				) : (
+					<>
+						{/* Mobile: card list */}
+						<div className="md:hidden">
 							{projects.map((project) => (
-								<tr key={project.id}>
-									<td className="px-4 py-3 font-medium text-slate-900">
-										{project.name}
-									</td>
-									<td className="max-w-xs truncate px-4 py-3 text-blue-600">
-										<a
-											href={project.destinationUrl}
-											target="_blank"
-											rel="noreferrer"
-										>
-											{project.destinationUrl}
-										</a>
-									</td>
-									<td className="px-4 py-3 text-slate-700">
-										{project.accessCount}
-									</td>
-									<td className="px-4 py-3 text-slate-500">
-										{new Date(project.createdAt).toLocaleDateString()}
-									</td>
-									<td className="px-4 py-3">
-										<div className="flex items-center justify-end gap-3">
-											<Link
-												to={`/projects/${project.id}/qrcodes`}
-												className="text-slate-500 hover:text-slate-900"
-												title="QR codes"
-											>
-												<QrCode className="h-4 w-4" />
-											</Link>
-											{hasPermission(
-												permissions,
-												Permissions.TRACKABLE_LINKS_ANALYTICS,
-											) && (
-												<Link
-													to={`/projects/${project.id}/analytics`}
-													className="text-slate-500 hover:text-slate-900"
-													title="Analytics"
-												>
-													<BarChart3 className="h-4 w-4" />
-												</Link>
-											)}
-											{hasPermission(
-												permissions,
-												Permissions.TRACKABLE_LINKS_DELETE,
-											) && (
-												<button
-													type="button"
-													onClick={() => handleDelete(project.id)}
-													className="text-slate-500 hover:text-red-600"
-													title="Delete"
-												>
-													<Trash2 className="h-4 w-4" />
-												</button>
-											)}
-										</div>
-									</td>
-								</tr>
+								<ProjectCard
+									key={project.id}
+									project={project}
+									canAnalytics={canAnalytics}
+									canDelete={canDelete}
+									onDelete={() => handleDeleteProject(project.projectId)}
+								/>
 							))}
-						</tbody>
-					</table>
-				</div>
-			)}
+						</div>
 
-			{totalPages > 1 && (
-				<div className="mt-4 flex items-center gap-2 text-sm">
-					<button
-						type="button"
-						disabled={page <= 1}
-						onClick={() => setPage((p) => p - 1)}
-						className="rounded-md border border-slate-300 px-3 py-1 disabled:opacity-40"
-					>
-						Prev
-					</button>
-					<span className="text-slate-500">
-						Page {page} of {totalPages}
-					</span>
-					<button
-						type="button"
-						disabled={page >= totalPages}
-						onClick={() => setPage((p) => p + 1)}
-						className="rounded-md border border-slate-300 px-3 py-1 disabled:opacity-40"
-					>
-						Next
-					</button>
-				</div>
-			)}
+						{/* Desktop: table */}
+						<div className="hidden md:block overflow-x-auto">
+							<table className="w-full text-sm">
+								<thead>
+									<tr className="border-b bg-muted/50">
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											Name
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											Destination URL
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											Scans
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											Created
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											Actions
+										</th>
+									</tr>
+								</thead>
+								<tbody>
+									{projects.map((project) => (
+										<tr
+											key={project.id}
+											className="border-b last:border-0 hover:bg-muted/30 transition-colors"
+										>
+											<td className="px-5 py-3 font-medium">{project.name}</td>
+											<td className="px-5 py-3 max-w-xs">
+												<a
+													href={project.destinationUrl}
+													target="_blank"
+													rel="noopener noreferrer"
+													className="flex items-center gap-1 text-primary hover:underline truncate"
+												>
+													<span className="truncate">
+														{project.destinationUrl}
+													</span>
+													<ExternalLink className="h-3 w-3 flex-shrink-0" />
+												</a>
+											</td>
+											<td className="px-5 py-3">
+												<span className="flex items-center gap-1.5 text-sm tabular-nums">
+													<ScanLine className="h-3.5 w-3.5 text-muted-foreground" />
+													{project.accessCount.toLocaleString()}
+												</span>
+											</td>
+											<td className="px-5 py-3 text-muted-foreground">
+												{project.createdAt
+													? new Date(project.createdAt).toLocaleDateString()
+													: '-'}
+											</td>
+											<td className="px-5 py-3">
+												<div className="flex items-center gap-2">
+													<Link
+														to={`/links/${project.projectId}/qrcodes`}
+														className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
+													>
+														<QrCode className="h-3 w-3" />
+														QR codes
+													</Link>
+													{canAnalytics && (
+														<Link
+															to={`/links/${project.projectId}/analytics`}
+															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
+														>
+															<BarChart2 className="h-3 w-3" />
+															Analytics
+														</Link>
+													)}
+													{canDelete && (
+														<button
+															type="button"
+															onClick={() =>
+																handleDeleteProject(project.projectId)
+															}
+															className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+														>
+															<Trash2 className="h-3 w-3" />
+															Delete
+														</button>
+													)}
+												</div>
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
+					</>
+				)}
+
+				<Pagination
+					currentPage={currentPage}
+					totalPages={totalPages}
+					total={total}
+					onPageChange={setCurrentPage}
+				/>
+			</div>
 		</div>
+	);
+}
+
+export default function ManageProjectsPage() {
+	return (
+		<PermissionGuard required={Permissions.TRACKABLE_LINKS_VIEW}>
+			<ManageProjectsContent />
+		</PermissionGuard>
 	);
 }

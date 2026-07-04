@@ -1,219 +1,555 @@
-import { ArrowLeft } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import {
+	ArrowLeft,
+	ChevronDown,
+	ChevronLeft,
+	ChevronRight,
+	Loader,
+} from 'lucide-react';
+import {
+	type ReactNode,
+	useCallback,
+	useEffect,
+	useMemo,
+	useState,
+} from 'react';
 import { Link, useParams } from 'react-router-dom';
 import {
 	Bar,
 	BarChart,
 	CartesianGrid,
 	Cell,
-	Legend,
 	ResponsiveContainer,
 	Tooltip,
 	XAxis,
 	YAxis,
 } from 'recharts';
-import { apiFetch } from '../lib/api';
-
-interface AccessStat {
-	hour: number;
-	location: string;
-	count: number;
-}
+import { PermissionGuard } from '../components/PermissionGuard';
+import { TRACABLE_LINKS_API_URL } from '../config';
+import { Permissions } from '../hooks/useStaffAuth';
+import { authFetch } from '../lib/api';
 
 interface AccessLog {
 	qrId: string;
+	projectId: string;
 	accessedAt: string;
 	ipAddress: string | null;
 	location: string;
 }
 
-const COLORS = [
-	'#3b82f6',
-	'#10b981',
-	'#f59e0b',
-	'#ef4444',
-	'#8b5cf6',
-	'#06b6d4',
-	'#f97316',
-];
-const PAGE_SIZE = 15;
+interface StatRow {
+	hour: number;
+	location: string;
+	count: number;
+}
 
-export function ProjectAnalyticsPage() {
-	const { id: projectId } = useParams<{ id: string }>();
-	const [projectName, setProjectName] = useState('');
-	const [stats, setStats] = useState<AccessStat[]>([]);
+function hourLabel(h: number) {
+	return `${String(h).padStart(2, '0')}:00`;
+}
+
+const LOCATION_COLORS = [
+	'#6366f1',
+	'#f59e0b',
+	'#10b981',
+	'#ef4444',
+	'#3b82f6',
+	'#ec4899',
+	'#8b5cf6',
+	'#14b8a6',
+];
+
+const LOG_PAGE_SIZE = 10;
+
+function BarTooltip({
+	active,
+	payload,
+	label,
+}: {
+	active?: boolean;
+	payload?: Array<{ name: string; value: number; fill: string }>;
+	label?: string;
+}) {
+	if (!active || !payload?.length) return null;
+	const items = payload.filter((p) => p.value > 0);
+	if (items.length === 0) return null;
+	return (
+		<div className="rounded-lg border bg-popover px-3 py-2 shadow-lg text-sm min-w-32">
+			<p className="mb-1.5 font-medium text-popover-foreground">{label}</p>
+			{items.map((entry) => (
+				<div
+					key={entry.name}
+					className="flex items-center gap-1.5 text-popover-foreground"
+				>
+					<span
+						className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+						style={{ background: entry.fill }}
+					/>
+					<span>
+						{entry.name}: {entry.value}
+					</span>
+				</div>
+			))}
+		</div>
+	);
+}
+
+function Accordion({
+	title,
+	description,
+	children,
+	defaultOpen = true,
+}: {
+	title: string;
+	description?: string;
+	children: ReactNode;
+	defaultOpen?: boolean;
+}) {
+	const [open, setOpen] = useState(defaultOpen);
+	return (
+		<div className="rounded-lg border bg-card shadow-sm overflow-hidden">
+			<button
+				type="button"
+				onClick={() => setOpen((v) => !v)}
+				className="flex w-full items-center justify-between p-5 text-left hover:bg-muted/30 transition-colors"
+			>
+				<div>
+					<p className="font-semibold">{title}</p>
+					{description && (
+						<p className="mt-0.5 text-xs text-muted-foreground">
+							{description}
+						</p>
+					)}
+				</div>
+				<ChevronDown
+					className={`h-4 w-4 text-muted-foreground flex-shrink-0 transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+				/>
+			</button>
+			{open && <div className="border-t">{children}</div>}
+		</div>
+	);
+}
+
+function Pagination({
+	currentPage,
+	totalPages,
+	total,
+	onPageChange,
+}: {
+	currentPage: number;
+	totalPages: number;
+	total: number;
+	onPageChange: (page: number) => void;
+}) {
+	if (totalPages <= 1) return null;
+	const start = (currentPage - 1) * LOG_PAGE_SIZE + 1;
+	const end = Math.min(currentPage * LOG_PAGE_SIZE, total);
+	const pages = Array.from({ length: totalPages }, (_, i) => i + 1)
+		.filter(
+			(p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1,
+		)
+		.reduce<(number | '…')[]>((acc, p, idx, arr) => {
+			if (idx > 0 && (arr[idx - 1] as number) < p - 1) acc.push('…');
+			acc.push(p);
+			return acc;
+		}, []);
+
+	return (
+		<div className="flex items-center justify-between border-t px-5 py-3">
+			<p className="text-xs text-muted-foreground">
+				{start}–{end} of {total}
+			</p>
+			<div className="flex items-center gap-1">
+				<button
+					type="button"
+					onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+					disabled={currentPage === 1}
+					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+				>
+					<ChevronLeft className="h-4 w-4" />
+				</button>
+				{pages.map((p, idx) =>
+					p === '…' ? (
+						<span
+							key={`ellipsis-${idx}`}
+							className="px-1 text-xs text-muted-foreground"
+						>
+							…
+						</span>
+					) : (
+						<button
+							key={p}
+							type="button"
+							onClick={() => onPageChange(p as number)}
+							className={`h-7 min-w-7 rounded-md border px-2 text-xs transition-colors ${
+								currentPage === p
+									? 'bg-primary text-primary-foreground border-primary'
+									: 'hover:bg-muted/50'
+							}`}
+						>
+							{p}
+						</button>
+					),
+				)}
+				<button
+					type="button"
+					onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+					disabled={currentPage === totalPages}
+					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+				>
+					<ChevronRight className="h-4 w-4" />
+				</button>
+			</div>
+		</div>
+	);
+}
+
+function ProjectAnalyticsContent() {
+	const { id } = useParams<{ id: string }>();
+	const [projectName, setProjectName] = useState<string>('');
+	const [stats, setStats] = useState<StatRow[]>([]);
 	const [logs, setLogs] = useState<AccessLog[]>([]);
-	const [total, setTotal] = useState(0);
-	const [page, setPage] = useState(1);
-	const [loading, setLoading] = useState(true);
+	const [logTotal, setLogTotal] = useState(0);
+	const [logPage, setLogPage] = useState(1);
+	const [isLoadingStats, setIsLoadingStats] = useState(false);
+	const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+	const [error, setError] = useState<string | null>(null);
+
+	const fetchStats = useCallback(async () => {
+		if (!id) return;
+		setIsLoadingStats(true);
+		try {
+			const [projectRes, statsRes] = await Promise.all([
+				authFetch(`${TRACABLE_LINKS_API_URL}/projects/${id}`),
+				authFetch(`${TRACABLE_LINKS_API_URL}/projects/${id}/access-stats`),
+			]);
+			if (projectRes.ok) {
+				const project = await projectRes.json();
+				setProjectName((project as { name?: string }).name ?? id ?? '');
+			}
+			if (!statsRes.ok) throw new Error(`HTTP ${statsRes.status}`);
+			const data = await statsRes.json();
+			setStats(Array.isArray(data) ? data : []);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : 'Something went wrong');
+		} finally {
+			setIsLoadingStats(false);
+		}
+	}, [id]);
+
+	const fetchLogs = useCallback(
+		async (page: number) => {
+			if (!id) return;
+			setIsLoadingLogs(true);
+			try {
+				const res = await authFetch(
+					`${TRACABLE_LINKS_API_URL}/projects/${id}/access-logs?page=${page}&limit=${LOG_PAGE_SIZE}`,
+				);
+				if (!res.ok) throw new Error(`HTTP ${res.status}`);
+				const data = await res.json();
+				setLogs(Array.isArray(data.data) ? data.data : []);
+				setLogTotal(typeof data.total === 'number' ? data.total : 0);
+			} catch (e) {
+				setError(e instanceof Error ? e.message : 'Something went wrong');
+			} finally {
+				setIsLoadingLogs(false);
+			}
+		},
+		[id],
+	);
 
 	useEffect(() => {
-		if (!projectId) return;
-		setLoading(true);
-		Promise.all([
-			apiFetch<{ name: string }>(`/projects/${projectId}`),
-			apiFetch<AccessStat[]>(`/projects/${projectId}/access-stats`),
-			apiFetch<{ data: AccessLog[]; total: number }>(
-				`/projects/${projectId}/access-logs?page=${page}&limit=${PAGE_SIZE}`,
-			),
-		]).then(([project, statsRes, logsRes]) => {
-			setProjectName(project.name);
-			setStats(statsRes);
-			setLogs(logsRes.data);
-			setTotal(logsRes.total);
-			setLoading(false);
-		});
-	}, [projectId, page]);
+		fetchStats();
+	}, [fetchStats]);
+
+	useEffect(() => {
+		fetchLogs(logPage);
+	}, [fetchLogs, logPage]);
 
 	const locations = useMemo(
-		() => Array.from(new Set(stats.map((s) => s.location))),
+		() => [...new Set(stats.map((s) => s.location))].sort(),
 		[stats],
 	);
 
-	const hourlyData = useMemo(() => {
-		const byHour = new Map<number, Record<string, number>>();
-		for (let h = 0; h < 24; h++) byHour.set(h, {});
-		for (const stat of stats) {
-			byHour.get(stat.hour)![stat.location] = stat.count;
+	const hourlyByLocation = useMemo(() => {
+		const map: Record<number, Record<string, number>> = {};
+		for (let h = 0; h < 24; h++) map[h] = {};
+		for (const s of stats) {
+			map[s.hour][s.location] = s.count;
 		}
-		return Array.from(byHour.entries()).map(([hour, counts]) => ({
-			hour: `${hour}:00`,
-			...counts,
+		return Array.from({ length: 24 }, (_, h) => ({
+			hour: hourLabel(h),
+			...map[h],
 		}));
 	}, [stats]);
 
 	const locationTotals = useMemo(() => {
-		const totals = new Map<string, number>();
-		for (const stat of stats) {
-			totals.set(stat.location, (totals.get(stat.location) ?? 0) + stat.count);
+		const map: Record<string, number> = {};
+		for (const s of stats) {
+			map[s.location] = (map[s.location] ?? 0) + s.count;
 		}
-		return Array.from(totals.entries())
+		return Object.entries(map)
 			.map(([location, count]) => ({ location, count }))
 			.sort((a, b) => b.count - a.count);
 	}, [stats]);
 
-	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+	const activeHours = useMemo(() => {
+		const withData = new Set(stats.map((s) => s.hour));
+		if (withData.size === 0) return hourlyByLocation;
+		const min = Math.max(0, Math.min(...withData) - 1);
+		const max = Math.min(23, Math.max(...withData) + 1);
+		return hourlyByLocation.slice(min, max + 1);
+	}, [stats, hourlyByLocation]);
+
+	const logTotalPages = Math.max(1, Math.ceil(logTotal / LOG_PAGE_SIZE));
+	const totalScans = useMemo(
+		() => stats.reduce((sum, s) => sum + s.count, 0),
+		[stats],
+	);
+	const isLoading = isLoadingStats;
 
 	return (
-		<div className="p-8">
-			<Link
-				to="/"
-				className="mb-4 inline-flex items-center gap-1 text-sm text-slate-500 hover:text-slate-900"
-			>
-				<ArrowLeft className="h-4 w-4" />
-				Projects
-			</Link>
-			<h1 className="mb-6 text-xl font-semibold text-slate-900">
-				{projectName || 'Analytics'}
-			</h1>
+		<div className="container mx-auto max-w-6xl p-4 md:p-6 space-y-4 md:space-y-6">
+			<div>
+				<Link
+					to="/links"
+					className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+				>
+					<ArrowLeft className="h-4 w-4" />
+					Back to projects
+				</Link>
+			</div>
 
-			{loading ? (
-				<p className="text-slate-500">Loading…</p>
+			<div>
+				<h1 className="text-2xl font-bold">Analytics</h1>
+				{projectName && (
+					<p className="mt-1 text-sm text-muted-foreground">
+						Project: {projectName} — {totalScans.toLocaleString()} scans total
+					</p>
+				)}
+			</div>
+
+			{error && (
+				<div className="rounded-md border border-destructive/50 bg-destructive/10 p-4">
+					<p className="text-sm text-destructive">{error}</p>
+				</div>
+			)}
+
+			{isLoading ? (
+				<div className="flex items-center justify-center py-24">
+					<Loader className="h-8 w-8 animate-spin text-primary" />
+				</div>
+			) : stats.length === 0 && logTotal === 0 ? (
+				<div className="rounded-lg border bg-card p-12 text-center text-muted-foreground">
+					No scans yet.
+				</div>
 			) : (
 				<>
-					<div className="mb-6 grid gap-6 lg:grid-cols-2">
-						<div className="rounded-lg border border-slate-200 bg-white p-4">
-							<h2 className="mb-4 text-sm font-semibold text-slate-700">
-								Scans by hour of day
-							</h2>
-							<ResponsiveContainer width="100%" height={280}>
-								<BarChart data={hourlyData}>
-									<CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-									<XAxis dataKey="hour" fontSize={12} />
-									<YAxis allowDecimals={false} fontSize={12} />
-									<Tooltip />
-									<Legend />
-									{locations.map((location, i) => (
+					<Accordion
+						title="Scans by hour and location"
+						description="Which hours and locations get scanned most"
+					>
+						<div className="p-5">
+							{locations.length > 0 && (
+								<div className="mb-3 flex max-h-20 flex-wrap gap-x-3 gap-y-1 overflow-y-auto pr-1 text-xs">
+									{locations.map((loc, i) => (
+										<div
+											key={`legend-${loc}`}
+											className="flex items-center gap-1.5 text-muted-foreground"
+										>
+											<span
+												className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm"
+												style={{
+													background:
+														LOCATION_COLORS[i % LOCATION_COLORS.length],
+												}}
+											/>
+											<span>{loc}</span>
+										</div>
+									))}
+								</div>
+							)}
+							<ResponsiveContainer width="100%" height={320}>
+								<BarChart
+									data={activeHours}
+									margin={{ top: 8, right: 16, left: 0, bottom: 0 }}
+								>
+									<CartesianGrid
+										strokeDasharray="3 3"
+										className="stroke-border"
+									/>
+									<XAxis
+										dataKey="hour"
+										tick={{ fontSize: 11 }}
+										className="fill-muted-foreground"
+									/>
+									<YAxis
+										allowDecimals={false}
+										tick={{ fontSize: 11 }}
+										className="fill-muted-foreground"
+									/>
+									<Tooltip
+										allowEscapeViewBox={{ x: false, y: true }}
+										cursor={{ fill: 'currentColor', fillOpacity: 0.06 }}
+										content={<BarTooltip />}
+									/>
+									{locations.map((loc, i) => (
 										<Bar
-											key={location}
-											dataKey={location}
-											stackId="location"
-											fill={COLORS[i % COLORS.length]}
+											key={loc}
+											dataKey={loc}
+											stackId="a"
+											fill={LOCATION_COLORS[i % LOCATION_COLORS.length]}
+											radius={
+												i === locations.length - 1 ? [3, 3, 0, 0] : undefined
+											}
 										/>
 									))}
 								</BarChart>
 							</ResponsiveContainer>
 						</div>
+					</Accordion>
 
-						<div className="rounded-lg border border-slate-200 bg-white p-4">
-							<h2 className="mb-4 text-sm font-semibold text-slate-700">
-								Scans by location
-							</h2>
-							<ResponsiveContainer width="100%" height={280}>
-								<BarChart data={locationTotals} layout="vertical">
-									<CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
-									<XAxis type="number" allowDecimals={false} fontSize={12} />
+					<Accordion
+						title="Scans by location"
+						description="Total scans per installed location"
+					>
+						<div className="p-5">
+							<ResponsiveContainer width="100%" height={220}>
+								<BarChart
+									data={locationTotals}
+									layout="vertical"
+									margin={{ top: 4, right: 32, left: 8, bottom: 0 }}
+								>
+									<CartesianGrid
+										strokeDasharray="3 3"
+										className="stroke-border"
+										horizontal={false}
+									/>
+									<XAxis
+										type="number"
+										allowDecimals={false}
+										tick={{ fontSize: 11 }}
+										className="fill-muted-foreground"
+									/>
 									<YAxis
 										type="category"
 										dataKey="location"
-										width={100}
-										fontSize={12}
+										width={96}
+										tick={{ fontSize: 11 }}
+										className="fill-muted-foreground"
 									/>
-									<Tooltip />
-									<Bar dataKey="count">
+									<Tooltip content={<BarTooltip />} />
+									<Bar dataKey="count" name="Scans" radius={[0, 3, 3, 0]}>
 										{locationTotals.map((_, i) => (
-											<Cell key={i} fill={COLORS[i % COLORS.length]} />
+											<Cell
+												key={`cell-${i}`}
+												fill={LOCATION_COLORS[i % LOCATION_COLORS.length]}
+											/>
 										))}
 									</Bar>
 								</BarChart>
 							</ResponsiveContainer>
 						</div>
-					</div>
+					</Accordion>
 
-					<div className="overflow-hidden rounded-lg border border-slate-200 bg-white">
-						<table className="w-full text-left text-sm">
-							<thead className="border-b border-slate-200 bg-slate-50 text-slate-500">
-								<tr>
-									<th className="px-4 py-3 font-medium">Time</th>
-									<th className="px-4 py-3 font-medium">Location</th>
-									<th className="px-4 py-3 font-medium">QR ID</th>
-									<th className="px-4 py-3 font-medium">IP</th>
-								</tr>
-							</thead>
-							<tbody className="divide-y divide-slate-100">
-								{logs.map((log, i) => (
-									<tr key={i}>
-										<td className="px-4 py-3 text-slate-700">
-											{new Date(log.accessedAt).toLocaleString()}
-										</td>
-										<td className="px-4 py-3 text-slate-900">{log.location}</td>
-										<td className="px-4 py-3 font-mono text-xs text-slate-500">
-											{log.qrId}
-										</td>
-										<td className="px-4 py-3 text-slate-500">
-											{log.ipAddress ?? '—'}
-										</td>
-									</tr>
-								))}
-							</tbody>
-						</table>
-					</div>
+					<Accordion
+						title="Scan history"
+						description={`${logTotal.toLocaleString()} total`}
+					>
+						{isLoadingLogs ? (
+							<div className="flex items-center justify-center py-16">
+								<Loader className="h-6 w-6 animate-spin text-primary" />
+							</div>
+						) : logs.length === 0 ? (
+							<p className="px-5 py-8 text-center text-sm text-muted-foreground">
+								No scans yet.
+							</p>
+						) : (
+							<>
+								{/* Mobile: card list */}
+								<div className="md:hidden divide-y">
+									{logs.map((log, i) => (
+										<div
+											key={`${log.qrId}-${log.accessedAt}-${i}`}
+											className="px-4 py-3 hover:bg-muted/30 transition-colors"
+										>
+											<p className="text-sm font-medium">{log.location}</p>
+											<div className="mt-0.5 flex items-center justify-between gap-2">
+												<p className="text-xs text-muted-foreground">
+													{log.accessedAt
+														? new Date(log.accessedAt).toLocaleString()
+														: '-'}
+												</p>
+												<p className="font-mono text-xs text-muted-foreground shrink-0">
+													{log.ipAddress ?? '-'}
+												</p>
+											</div>
+										</div>
+									))}
+								</div>
 
-					{totalPages > 1 && (
-						<div className="mt-4 flex items-center gap-2 text-sm">
-							<button
-								type="button"
-								disabled={page <= 1}
-								onClick={() => setPage((p) => p - 1)}
-								className="rounded-md border border-slate-300 px-3 py-1 disabled:opacity-40"
-							>
-								Prev
-							</button>
-							<span className="text-slate-500">
-								Page {page} of {totalPages}
-							</span>
-							<button
-								type="button"
-								disabled={page >= totalPages}
-								onClick={() => setPage((p) => p + 1)}
-								className="rounded-md border border-slate-300 px-3 py-1 disabled:opacity-40"
-							>
-								Next
-							</button>
-						</div>
-					)}
+								{/* Desktop: table */}
+								<div className="hidden md:block overflow-x-auto">
+									<table className="w-full text-sm">
+										<thead>
+											<tr className="border-b bg-muted/50">
+												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+													Location
+												</th>
+												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+													Time
+												</th>
+												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+													QR ID
+												</th>
+												<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+													IP
+												</th>
+											</tr>
+										</thead>
+										<tbody>
+											{logs.map((log, i) => (
+												<tr
+													key={`${log.qrId}-${log.accessedAt}-${i}`}
+													className="border-b last:border-0 hover:bg-muted/30 transition-colors"
+												>
+													<td className="px-5 py-3 font-medium">
+														{log.location}
+													</td>
+													<td className="px-5 py-3 text-muted-foreground">
+														{log.accessedAt
+															? new Date(log.accessedAt).toLocaleString()
+															: '-'}
+													</td>
+													<td className="px-5 py-3 font-mono text-xs text-muted-foreground">
+														{log.qrId ? `${log.qrId.slice(0, 8)}…` : '-'}
+													</td>
+													<td className="px-5 py-3 font-mono text-xs text-muted-foreground">
+														{log.ipAddress ?? '-'}
+													</td>
+												</tr>
+											))}
+										</tbody>
+									</table>
+								</div>
+
+								<Pagination
+									currentPage={logPage}
+									totalPages={logTotalPages}
+									total={logTotal}
+									onPageChange={setLogPage}
+								/>
+							</>
+						)}
+					</Accordion>
 				</>
 			)}
 		</div>
+	);
+}
+
+export default function ProjectAnalyticsPage() {
+	return (
+		<PermissionGuard required={Permissions.TRACKABLE_LINKS_ANALYTICS}>
+			<ProjectAnalyticsContent />
+		</PermissionGuard>
 	);
 }

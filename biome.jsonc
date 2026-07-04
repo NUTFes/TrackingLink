@@ -13,7 +13,12 @@
 		"rules": {
 			"recommended": true,
 			"style": { "noNonNullAssertion": "off" },
-			"a11y": { "useButtonType": "off", "noAutofocus": "off" },
+			"a11y": {
+				"useButtonType": "off",
+				"noAutofocus": "off",
+				"useSemanticElements": "off",
+				"useKeyWithClickEvents": "off"
+			},
 			"suspicious": { "noArrayIndexKey": "off", "noExplicitAny": "off" },
 			"correctness": { "useExhaustiveDependencies": "off" }
 		}

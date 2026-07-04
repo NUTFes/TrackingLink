@@ -1,13 +1,13 @@
 import type { ReactNode } from 'react';
 import { Navigate } from 'react-router-dom';
-import { useAuth } from './AuthProvider';
+import { useAuthContext } from './AuthProvider';
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
-	const { user, loading } = useAuth();
+	const { user, isLoading } = useAuthContext();
 
-	if (loading) {
+	if (isLoading) {
 		return (
-			<div className="flex h-screen items-center justify-center text-slate-500">
+			<div className="flex h-screen items-center justify-center text-muted-foreground">
 				Loading…
 			</div>
 		);
