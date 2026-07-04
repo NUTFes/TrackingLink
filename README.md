@@ -106,17 +106,29 @@ or your CI) to the deployed API URL before building `packages/web`.
 
 ## Authentication
 
-There's no external identity provider by design — the admin dashboard uses a single shared
+There's no external identity provider by default — the admin dashboard uses a single shared
 `ADMIN_PASSWORD`. `POST /auth/login` exchanges it for a short-lived (24h) HS256 JWT that carries
 the full permission bitmask; the dashboard sends it back as `Authorization: Bearer <token>` on
 every request.
 
-If you need real per-user accounts or SSO, that logic lives entirely in
-[`packages/api/src/auth.ts`](packages/api/src/auth.ts) and
-[`packages/api/src/routes/auth.ts`](packages/api/src/routes/auth.ts) — replace
-`verifyLocalSession`/`POST /auth/login` with a call to your own identity provider (Auth0, Clerk,
-your org's SSO, ...); every other route only cares that it ends up with a Bearer token that
-resolves to `{ sub, permissions }`.
+This lives behind one seam so it's easy to replace — [`packages/api/src/auth/`](packages/api/src/auth):
+
+```
+auth/
+├── types.ts       # Verifier type + Bindings/AuthUser/HonoEnv — the contract everything else depends on
+├── local.ts        # the built-in single-admin-password Verifier (signLocalSession/verifyLocalSession)
+├── middleware.ts    # createAuthMiddleware(verifier) — turns any Verifier into Hono middleware
+└── index.ts        # re-exports all of the above
+```
+
+A `Verifier` is just `(token, env) => Promise<{ sub, permissions } | null>`. To plug in a real
+identity provider (Auth0, Clerk, your org's SSO, a per-user database, ...), write a function with
+that signature and pass it to `createAuthMiddleware` in place of the built-in `verifyLocalSession`
+— see the worked example in [`auth/types.ts`](packages/api/src/auth/types.ts). Nothing else in the
+codebase needs to change: every route only depends on `c.get('user')` resolving to
+`{ sub, permissions }`, not on how it got there. `POST /auth/login` and `GET /auth/me` in
+[`routes/auth.ts`](packages/api/src/routes/auth.ts) are themselves just the default login flow —
+replace or remove them if your provider handles login differently (e.g. an OAuth redirect).
 
 ### Permissions
 

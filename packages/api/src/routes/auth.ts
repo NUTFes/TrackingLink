@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import * as z from 'zod';
-import { type HonoEnv, authMiddleware, signSession } from '../auth';
+import { type HonoEnv, authMiddleware, signLocalSession } from '../auth';
 import { ALL_PERMISSIONS } from '../permissions';
 
 const loginBodySchema = z.object({
@@ -11,11 +11,13 @@ const authApp = new Hono<HonoEnv>();
 
 // POST /auth/login — exchange the shared admin password for a session token.
 //
-// This is a minimal single-admin login meant to get you running without any
-// external identity provider. If you need per-user accounts, replace this
-// route (and `authMiddleware` in ../auth.ts) with your own logic — the rest
-// of the API only cares that it ends up with a Bearer token that resolves to
-// `{ sub, permissions }`.
+// This is the built-in single-admin login (see `../auth/local.ts`), meant to
+// get you running without any external identity provider. If you need
+// per-user accounts or SSO, write a new `Verifier` (see `Verifier` in
+// `../auth/types.ts`) and swap it into `createAuthMiddleware` in
+// `../auth/middleware.ts` — you can replace or remove this route entirely,
+// since the rest of the API only cares that it ends up with a Bearer token
+// that resolves to `{ sub, permissions }`.
 authApp.post('/login', async (c) => {
 	const body = await c.req.json().catch(() => null);
 	const parsed = loginBodySchema.safeParse(body);
@@ -27,7 +29,7 @@ authApp.post('/login', async (c) => {
 		return c.json({ error: 'Invalid password' }, 401);
 	}
 
-	const token = await signSession(
+	const token = await signLocalSession(
 		{ sub: 'admin', permissions: ALL_PERMISSIONS },
 		c.env.JWT_SECRET,
 	);
