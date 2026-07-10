@@ -1,8 +1,8 @@
--- Trackable Links schema
+-- TrackingLink schema
 --
 -- Apply with:
---   wrangler d1 execute trackable-links-db --local  --file=./schema.sql
---   wrangler d1 execute trackable-links-db --remote --file=./schema.sql
+--   wrangler d1 execute tracking-link-db --local  --file=./schema.sql
+--   wrangler d1 execute tracking-link-db --remote --file=./schema.sql
 
 CREATE TABLE IF NOT EXISTS Projects (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

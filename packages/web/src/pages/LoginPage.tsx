@@ -44,7 +44,7 @@ export function LoginPage() {
 				className="w-full max-w-sm rounded-lg border bg-card p-8 shadow-sm"
 			>
 				<div className="mb-1 flex items-center justify-between">
-					<h1 className="text-lg font-semibold">Trackable Links</h1>
+					<h1 className="text-lg font-semibold">TrackingLink</h1>
 					<LanguageSwitcher />
 				</div>
 				<p className="mb-6 text-sm text-muted-foreground">

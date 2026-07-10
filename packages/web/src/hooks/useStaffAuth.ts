@@ -2,10 +2,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { apiFetch, clearToken, getToken, setToken } from '../lib/api';
 
 export const Permissions = {
-	TRACKABLE_LINKS_VIEW: 1 << 0,
-	TRACKABLE_LINKS_EDIT: 1 << 1,
-	TRACKABLE_LINKS_ANALYTICS: 1 << 2,
-	TRACKABLE_LINKS_DELETE: 1 << 3,
+	TRACKING_LINK_VIEW: 1 << 0,
+	TRACKING_LINK_EDIT: 1 << 1,
+	TRACKING_LINK_ANALYTICS: 1 << 2,
+	TRACKING_LINK_DELETE: 1 << 3,
 } as const;
 
 export const ALL_PERMISSIONS = Object.values(Permissions).reduce(

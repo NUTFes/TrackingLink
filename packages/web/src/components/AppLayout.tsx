@@ -17,7 +17,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 			<aside className="flex w-60 flex-col border-r border-sidebar-border bg-sidebar p-4 text-sidebar-foreground">
 				<div className="mb-6 flex items-center gap-2 px-2 font-semibold">
 					<LinkIcon className="h-5 w-5 text-sidebar-primary" />
-					Trackable Links
+					TrackingLink
 				</div>
 				<nav className="flex flex-1 flex-col gap-1">
 					<Link
@@ -26,7 +26,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
 					>
 						{t('nav.projects')}
 					</Link>
-					{hasPermission(permissions, Permissions.TRACKABLE_LINKS_EDIT) && (
+					{hasPermission(permissions, Permissions.TRACKING_LINK_EDIT) && (
 						<Link
 							to="/links/create"
 							className="flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"

@@ -170,9 +170,9 @@ projectsApp.put('/:id', async (c) => {
 projectsApp.delete('/:id', async (c) => {
 	const user = c.get('user');
 	if (
-		!hasPermission(user?.permissions ?? 0, Permissions.TRACKABLE_LINKS_DELETE)
+		!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_DELETE)
 	) {
-		return c.json({ error: 'TRACKABLE_LINKS_DELETE permission required' }, 403);
+		return c.json({ error: 'TRACKING_LINK_DELETE permission required' }, 403);
 	}
 	const projectId = c.req.param('id');
 	const db = getDb(c.env.DB);
@@ -313,24 +313,23 @@ projectsApp.put('/qrcodes/:id', async (c) => {
 });
 
 // DELETE /projects/qrcodes/:id — delete a QR code (and its access logs)
-// TRACKABLE_LINKS_DELETE can delete any QR code; TRACKABLE_LINKS_EDIT only its own.
+// TRACKING_LINK_DELETE can delete any QR code; TRACKING_LINK_EDIT only its own.
 projectsApp.delete('/qrcodes/:id', async (c) => {
 	const user = c.get('user');
 	const userPermissions = user?.permissions ?? 0;
 	const canDeleteAny = hasPermission(
 		userPermissions,
-		Permissions.TRACKABLE_LINKS_DELETE,
+		Permissions.TRACKING_LINK_DELETE,
 	);
 	const canEdit = hasPermission(
 		userPermissions,
-		Permissions.TRACKABLE_LINKS_EDIT,
+		Permissions.TRACKING_LINK_EDIT,
 	);
 
 	if (!canDeleteAny && !canEdit) {
 		return c.json(
 			{
-				error:
-					'TRACKABLE_LINKS_EDIT or TRACKABLE_LINKS_DELETE permission required',
+				error: 'TRACKING_LINK_EDIT or TRACKING_LINK_DELETE permission required',
 			},
 			403,
 		);

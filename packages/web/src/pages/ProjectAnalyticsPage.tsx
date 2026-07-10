@@ -24,7 +24,7 @@ import {
 	YAxis,
 } from 'recharts';
 import { PermissionGuard } from '../components/PermissionGuard';
-import { TRACABLE_LINKS_API_URL } from '../config';
+import { TRACKING_LINK_API_URL } from '../config';
 import { Permissions } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
 import { useTranslation } from '../lib/i18n';
@@ -221,8 +221,8 @@ function ProjectAnalyticsContent() {
 		setIsLoadingStats(true);
 		try {
 			const [projectRes, statsRes] = await Promise.all([
-				authFetch(`${TRACABLE_LINKS_API_URL}/projects/${id}`),
-				authFetch(`${TRACABLE_LINKS_API_URL}/projects/${id}/access-stats`),
+				authFetch(`${TRACKING_LINK_API_URL}/projects/${id}`),
+				authFetch(`${TRACKING_LINK_API_URL}/projects/${id}/access-stats`),
 			]);
 			if (projectRes.ok) {
 				const project = await projectRes.json();
@@ -244,7 +244,7 @@ function ProjectAnalyticsContent() {
 			setIsLoadingLogs(true);
 			try {
 				const res = await authFetch(
-					`${TRACABLE_LINKS_API_URL}/projects/${id}/access-logs?page=${page}&limit=${LOG_PAGE_SIZE}`,
+					`${TRACKING_LINK_API_URL}/projects/${id}/access-logs?page=${page}&limit=${LOG_PAGE_SIZE}`,
 				);
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);
 				const data = await res.json();
@@ -558,7 +558,7 @@ function ProjectAnalyticsContent() {
 
 export default function ProjectAnalyticsPage() {
 	return (
-		<PermissionGuard required={Permissions.TRACKABLE_LINKS_ANALYTICS}>
+		<PermissionGuard required={Permissions.TRACKING_LINK_ANALYTICS}>
 			<ProjectAnalyticsContent />
 		</PermissionGuard>
 	);

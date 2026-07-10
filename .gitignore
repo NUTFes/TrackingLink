@@ -10,3 +10,7 @@ worker-configuration.d.ts
 .DS_Store
 *.log
 *.tsbuildinfo
+
+# Local machine-specific / internal-only files
+.claude/settings.local.json
+/DS MTG_Tracking-Link要件定義.md

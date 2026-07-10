@@ -1,26 +1,18 @@
 {
-	"name": "trackable-links-oss",
+	"name": "tracking-link",
 	"private": true,
 	"type": "module",
 	"description": "Self-hosted QR code link tracker on Cloudflare Workers + D1.",
 	"license": "MIT",
-	"repository": {
-		"type": "git",
-		"url": "https://github.com/gakusai-UoA/trackable-links-oss.git"
-	},
-	"homepage": "https://github.com/gakusai-UoA/trackable-links-oss#readme",
-	"bugs": {
-		"url": "https://github.com/gakusai-UoA/trackable-links-oss/issues"
-	},
 	"packageManager": "pnpm@9.15.0",
 	"engines": { "node": ">=20" },
 	"scripts": {
-		"dev": "concurrently --names \"api,web\" --prefix \"[{name}]\" \"pnpm --filter @trackable-links/api dev\" \"pnpm --filter @trackable-links/web dev\"",
-		"dev:api": "pnpm --filter @trackable-links/api dev",
-		"dev:web": "pnpm --filter @trackable-links/web dev",
-		"build": "pnpm --filter @trackable-links/web build",
-		"deploy:api": "pnpm --filter @trackable-links/api deploy",
-		"deploy:web": "pnpm --filter @trackable-links/web deploy",
+		"dev": "concurrently --names \"api,web\" --prefix \"[{name}]\" \"pnpm --filter @tracking-link/api dev\" \"pnpm --filter @tracking-link/web dev\"",
+		"dev:api": "pnpm --filter @tracking-link/api dev",
+		"dev:web": "pnpm --filter @tracking-link/web dev",
+		"build": "pnpm --filter @tracking-link/web build",
+		"deploy:api": "pnpm --filter @tracking-link/api deploy",
+		"deploy:web": "pnpm --filter @tracking-link/web deploy",
 		"typecheck": "pnpm -r run typecheck",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write ."

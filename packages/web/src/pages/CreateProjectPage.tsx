@@ -3,7 +3,7 @@ import { type FormEvent, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
 import { PermissionGuard } from '../components/PermissionGuard';
-import { TRACABLE_LINKS_API_URL } from '../config';
+import { TRACKING_LINK_API_URL } from '../config';
 import { Permissions } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
 import { useTranslation } from '../lib/i18n';
@@ -26,7 +26,7 @@ function CreateProjectForm() {
 		setIsSubmitting(true);
 		setError(null);
 		try {
-			const res = await authFetch(`${TRACABLE_LINKS_API_URL}/projects`, {
+			const res = await authFetch(`${TRACKING_LINK_API_URL}/projects`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
@@ -139,7 +139,7 @@ function CreateProjectForm() {
 
 export default function CreateProjectPage() {
 	return (
-		<PermissionGuard required={Permissions.TRACKABLE_LINKS_EDIT}>
+		<PermissionGuard required={Permissions.TRACKING_LINK_EDIT}>
 			<CreateProjectForm />
 		</PermissionGuard>
 	);

@@ -1,11 +1,13 @@
-# Trackable Links
+# TrackingLink
 
 A self-hosted QR code link tracker on Cloudflare Workers + D1: print QR codes that redirect to
 a destination URL, log every scan (time, location, user agent, IP), and see the results in a
 small admin dashboard.
 
 Originally built in-house for a university festival to track foot traffic from posters/flyers to
-installed QR codes around a venue, and extracted here as a standalone, generic project.
+installed QR codes around a venue, and extracted as a standalone, generic project
+([trackable-links-oss](https://github.com/gakusai-UoA/trackable-links-oss), MIT licensed).
+TrackingLink is a rebrand/fork of that project for our own festival's use.
 
 ## How it works
 
@@ -37,31 +39,30 @@ installed QR codes around a venue, and extracted here as a standalone, generic p
 - [`packages/web`](packages/web) — a React + Vite + Tailwind admin dashboard that talks to the API
   over `fetch`. Deployable as static assets (Cloudflare Workers Assets, Pages, or any static host).
 
-## Quick start
+## Quick start (local development)
 
-Requires Node 20+, [pnpm](https://pnpm.io), and a Cloudflare account.
+Requires Node 20+ and [pnpm](https://pnpm.io). **A Cloudflare account is *not* needed for local
+development** — `wrangler dev` simulates the Worker and D1 database entirely on your machine
+(Miniflare + a local SQLite file under `.wrangler/state`). You only need a Cloudflare account when
+you get to [Deploy](#deploy).
 
 ```sh
 pnpm install
 ```
 
-### 1. Create the D1 database
+### 1. Apply the schema to the local D1 database
+
+No `wrangler d1 create` or Cloudflare login required for this step — it just initializes the local
+SQLite file that Miniflare uses:
 
 ```sh
-pnpm --filter @trackable-links/api exec wrangler d1 create trackable-links-db
+pnpm --filter @tracking-link/api run db:apply:local
 ```
 
-Copy the printed `database_id` into `packages/api/wrangler.jsonc`, and set `account_id` at the
-top of that file to your own Cloudflare account id (`wrangler whoami`).
+### 2. Configure local secrets
 
-Apply the schema:
-
-```sh
-pnpm --filter @trackable-links/api run db:apply:local   # for local `wrangler dev`
-pnpm --filter @trackable-links/api run db:apply:remote  # once you're ready to deploy
-```
-
-### 2. Configure secrets
+This repo already ships `packages/api/.dev.vars` with local-only dev defaults, so you can skip
+straight to [step 3](#3-run-locally). To use your own values instead:
 
 ```sh
 cp packages/api/.dev.vars.example packages/api/.dev.vars
@@ -75,14 +76,6 @@ Edit `packages/api/.dev.vars` and set:
 | `ADMIN_PASSWORD`            | The password used to log in to the admin dashboard.                    |
 | `LOCATION_SETUP_PASSCODE`   | Shared passcode required to label a QR code's location after printing. |
 
-In production, set the same three values as Worker secrets instead of committing them:
-
-```sh
-pnpm --filter @trackable-links/api exec wrangler secret put JWT_SECRET
-pnpm --filter @trackable-links/api exec wrangler secret put ADMIN_PASSWORD
-pnpm --filter @trackable-links/api exec wrangler secret put LOCATION_SETUP_PASSCODE
-```
-
 ### 3. Run locally
 
 ```sh
@@ -91,9 +84,49 @@ pnpm dev
 
 This runs the API on `http://localhost:8789` and the dashboard on `http://localhost:5173`. Copy
 `packages/web/.env.example` to `packages/web/.env.local` if you need to point the dashboard at a
-different API URL. Log in with the `ADMIN_PASSWORD` you set above.
+different API URL.
 
-### 4. Deploy
+Log in at `http://localhost:5173` with the `ADMIN_PASSWORD` from `packages/api/.dev.vars`. Out of
+the box (unmodified `.dev.vars`) that's:
+
+```
+password: dev-admin-password
+```
+
+**Do not reuse these `.dev.vars` values in production.** Before deploying, create a real D1
+database and set real secrets as described below.
+
+## Deploy
+
+Requires a Cloudflare account.
+
+### 1. Create the remote D1 database
+
+```sh
+pnpm --filter @tracking-link/api exec wrangler d1 create tracking-link-db
+```
+
+Copy the printed `database_id` into `packages/api/wrangler.jsonc`, and set `account_id` at the
+top of that file to your own Cloudflare account id (`wrangler whoami`).
+
+Apply the schema to it:
+
+```sh
+pnpm --filter @tracking-link/api run db:apply:remote
+```
+
+### 2. Set production secrets
+
+```sh
+pnpm --filter @tracking-link/api exec wrangler secret put JWT_SECRET
+pnpm --filter @tracking-link/api exec wrangler secret put ADMIN_PASSWORD
+pnpm --filter @tracking-link/api exec wrangler secret put LOCATION_SETUP_PASSCODE
+```
+
+Use different, strong values from the local `.dev.vars` — generate `JWT_SECRET` with
+`openssl rand -base64 48`.
+
+### 3. Deploy
 
 ```sh
 pnpm deploy:api   # deploys packages/api with `wrangler deploy`
@@ -137,10 +170,10 @@ Four independent bits, combined into one bitmask (see
 
 | Bit  | Value | Grants |
 | ---- | ----- | ------ |
-| `TRACKABLE_LINKS_VIEW`      | 1 | List projects and QR codes |
-| `TRACKABLE_LINKS_EDIT`      | 2 | Create projects/QR codes, delete QR codes you created |
-| `TRACKABLE_LINKS_ANALYTICS` | 4 | View the analytics dashboard |
-| `TRACKABLE_LINKS_DELETE`    | 8 | Delete any project or QR code |
+| `TRACKING_LINK_VIEW`      | 1 | List projects and QR codes |
+| `TRACKING_LINK_EDIT`      | 2 | Create projects/QR codes, delete QR codes you created |
+| `TRACKING_LINK_ANALYTICS` | 4 | View the analytics dashboard |
+| `TRACKING_LINK_DELETE`    | 8 | Delete any project or QR code |
 
 The built-in single-admin login always grants all four. If you add multi-user auth, issue a
 `permissions` integer per user from whatever subset of these bits they should hold.

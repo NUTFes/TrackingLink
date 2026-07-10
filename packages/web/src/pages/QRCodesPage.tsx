@@ -20,7 +20,7 @@ import {
 import { Link, useParams } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
 import { PermissionGuard } from '../components/PermissionGuard';
-import { TRACABLE_LINKS_API_URL } from '../config';
+import { TRACKING_LINK_API_URL } from '../config';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
 import { useTranslation } from '../lib/i18n';
@@ -39,8 +39,7 @@ interface Project {
 }
 
 const PAGE_SIZE = 10;
-const FWD_BASE_URL =
-	import.meta.env.VITE_FWD_BASE_URL ?? TRACABLE_LINKS_API_URL;
+const FWD_BASE_URL = import.meta.env.VITE_FWD_BASE_URL ?? TRACKING_LINK_API_URL;
 
 /** Generates a QR code as a data URL, client-side. */
 function useQRDataUrl(text: string): {
@@ -270,11 +269,11 @@ function QRCodesContent() {
 	const { t } = useTranslation();
 	const canEdit = hasPermission(
 		user?.permissions ?? 0,
-		Permissions.TRACKABLE_LINKS_EDIT,
+		Permissions.TRACKING_LINK_EDIT,
 	);
 	const canDelete = hasPermission(
 		user?.permissions ?? 0,
-		Permissions.TRACKABLE_LINKS_DELETE,
+		Permissions.TRACKING_LINK_DELETE,
 	);
 	// EDIT permission: can only delete your own QR codes. DELETE permission: can delete any.
 	const canDeleteQR = (qr: QRCode) =>
@@ -298,9 +297,9 @@ function QRCodesContent() {
 			setError(null);
 			try {
 				const [projectRes, qrRes] = await Promise.all([
-					authFetch(`${TRACABLE_LINKS_API_URL}/projects/${projectId}`),
+					authFetch(`${TRACKING_LINK_API_URL}/projects/${projectId}`),
 					authFetch(
-						`${TRACABLE_LINKS_API_URL}/projects/${projectId}/qrcodes?page=${page}&limit=${PAGE_SIZE}`,
+						`${TRACKING_LINK_API_URL}/projects/${projectId}/qrcodes?page=${page}&limit=${PAGE_SIZE}`,
 					),
 				]);
 				if (projectRes.ok) {
@@ -330,7 +329,7 @@ function QRCodesContent() {
 		setIsCreating(true);
 		try {
 			const res = await authFetch(
-				`${TRACABLE_LINKS_API_URL}/projects/${projectId}/qrcodes`,
+				`${TRACKING_LINK_API_URL}/projects/${projectId}/qrcodes`,
 				{
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -356,7 +355,7 @@ function QRCodesContent() {
 		if (!confirm(t('qrCodes.deleteConfirm'))) return;
 		try {
 			const res = await authFetch(
-				`${TRACABLE_LINKS_API_URL}/projects/qrcodes/${qrId}`,
+				`${TRACKING_LINK_API_URL}/projects/qrcodes/${qrId}`,
 				{ method: 'DELETE' },
 			);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -566,7 +565,7 @@ function QRCodesContent() {
 
 export default function QRCodesPage() {
 	return (
-		<PermissionGuard required={Permissions.TRACKABLE_LINKS_VIEW}>
+		<PermissionGuard required={Permissions.TRACKING_LINK_VIEW}>
 			<QRCodesContent />
 		</PermissionGuard>
 	);

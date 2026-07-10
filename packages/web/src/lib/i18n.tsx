@@ -10,7 +10,7 @@ import {
 
 export type Locale = 'en' | 'ja';
 
-const LOCALE_KEY = 'trackable-links.locale';
+const LOCALE_KEY = 'tracking-link.locale';
 
 type Dictionary = Record<string, string>;
 
@@ -51,7 +51,7 @@ const en: Dictionary = {
 
 	'pagination.range': '{start}–{end} of {total}',
 
-	'projects.heading': 'Trackable Links',
+	'projects.heading': 'TrackingLink',
 	'projects.cardTitle': 'Projects',
 	'projects.empty': 'No projects yet.',
 	'projects.qrCodesLink': 'QR codes',
@@ -61,7 +61,7 @@ const en: Dictionary = {
 	'projects.deleteFailed': 'Failed to delete the project',
 
 	'createProject.heading': 'New project',
-	'createProject.subtitle': 'Create a new Trackable Links project',
+	'createProject.subtitle': 'Create a new TrackingLink project',
 	'createProject.nameLabel': 'Project name',
 	'createProject.namePlaceholder': 'e.g. Flyer campaign',
 	'createProject.urlLabel': 'Destination URL',
@@ -135,7 +135,7 @@ const ja: Dictionary = {
 
 	'pagination.range': '{start}〜{end} 件（全 {total} 件）',
 
-	'projects.heading': 'Trackable Links',
+	'projects.heading': 'TrackingLink',
 	'projects.cardTitle': 'プロジェクト一覧',
 	'projects.empty': 'プロジェクトがありません。',
 	'projects.qrCodesLink': 'QRコード',
@@ -145,7 +145,7 @@ const ja: Dictionary = {
 	'projects.deleteFailed': 'プロジェクトの削除に失敗しました',
 
 	'createProject.heading': 'プロジェクト作成',
-	'createProject.subtitle': '新しいTrackable Linksプロジェクトを作成します。',
+	'createProject.subtitle': '新しいTrackingLinkプロジェクトを作成します。',
 	'createProject.nameLabel': 'プロジェクト名',
 	'createProject.namePlaceholder': '例：チラシキャンペーン',
 	'createProject.urlLabel': '転送先URL',

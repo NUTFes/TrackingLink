@@ -12,7 +12,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
 import { PermissionGuard } from '../components/PermissionGuard';
-import { TRACABLE_LINKS_API_URL } from '../config';
+import { TRACKING_LINK_API_URL } from '../config';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
 import { authFetch } from '../lib/api';
 import { useTranslation } from '../lib/i18n';
@@ -178,15 +178,15 @@ function ManageProjectsContent() {
 	const { t } = useTranslation();
 	const canEdit = hasPermission(
 		user?.permissions ?? 0,
-		Permissions.TRACKABLE_LINKS_EDIT,
+		Permissions.TRACKING_LINK_EDIT,
 	);
 	const canAnalytics = hasPermission(
 		user?.permissions ?? 0,
-		Permissions.TRACKABLE_LINKS_ANALYTICS,
+		Permissions.TRACKING_LINK_ANALYTICS,
 	);
 	const canDelete = hasPermission(
 		user?.permissions ?? 0,
-		Permissions.TRACKABLE_LINKS_DELETE,
+		Permissions.TRACKING_LINK_DELETE,
 	);
 
 	const [projects, setProjects] = useState<Project[]>([]);
@@ -201,7 +201,7 @@ function ManageProjectsContent() {
 			setError(null);
 			try {
 				const res = await authFetch(
-					`${TRACABLE_LINKS_API_URL}/projects?page=${page}&limit=${PAGE_SIZE}`,
+					`${TRACKING_LINK_API_URL}/projects?page=${page}&limit=${PAGE_SIZE}`,
 				);
 				if (!res.ok) throw new Error(`HTTP ${res.status}`);
 				const data = await res.json();
@@ -224,7 +224,7 @@ function ManageProjectsContent() {
 		if (!confirm(t('projects.deleteConfirm'))) return;
 		try {
 			const res = await authFetch(
-				`${TRACABLE_LINKS_API_URL}/projects/${projectId}`,
+				`${TRACKING_LINK_API_URL}/projects/${projectId}`,
 				{ method: 'DELETE' },
 			);
 			if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -404,7 +404,7 @@ function ManageProjectsContent() {
 
 export default function ManageProjectsPage() {
 	return (
-		<PermissionGuard required={Permissions.TRACKABLE_LINKS_VIEW}>
+		<PermissionGuard required={Permissions.TRACKING_LINK_VIEW}>
 			<ManageProjectsContent />
 		</PermissionGuard>
 	);

@@ -2,9 +2,11 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately using GitHub's
-[Security Advisories](https://github.com/gakusai-UoA/trackable-links-oss/security/advisories/new)
+Please report security issues privately using GitHub's Security Advisories
 ("Report a vulnerability" on the Security tab) rather than opening a public issue.
+<!-- TODO: once this project has its own GitHub repository, link it here, e.g.
+     https://github.com/<org>/TrackingLink/security/advisories/new -->
+
 
 ## Known security tradeoffs
 

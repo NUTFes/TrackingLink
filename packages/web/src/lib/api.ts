@@ -1,6 +1,6 @@
-import { TRACABLE_LINKS_API_URL } from '../config';
+import { TRACKING_LINK_API_URL } from '../config';
 
-const TOKEN_KEY = 'trackable-links.token';
+const TOKEN_KEY = 'tracking-link.token';
 
 export function getToken(): string | null {
 	return localStorage.getItem(TOKEN_KEY);
@@ -48,7 +48,7 @@ export async function apiFetch<T>(
 ): Promise<T> {
 	const headers = new Headers(init.headers);
 	headers.set('Content-Type', 'application/json');
-	const response = await authFetch(`${TRACABLE_LINKS_API_URL}${path}`, {
+	const response = await authFetch(`${TRACKING_LINK_API_URL}${path}`, {
 		...init,
 		headers,
 	});

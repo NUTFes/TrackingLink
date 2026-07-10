@@ -4,8 +4,9 @@ Thanks for considering a contribution.
 
 ## Getting set up
 
-Follow the [Quick start](README.md#quick-start) in the README — it covers installing
-dependencies, creating a local D1 database, and running both packages with `pnpm dev`.
+Follow the [Quick start](README.md#quick-start-local-development) in the README — it covers
+installing dependencies, initializing the local D1 database, and running both packages with
+`pnpm dev`.
 
 ## Before opening a PR
 
