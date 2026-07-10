@@ -1,7 +1,7 @@
 {
 	"$schema": "node_modules/wrangler/config-schema.json",
-	// Set this to your own Cloudflare account id (`wrangler whoami`).
-	"account_id": "<YOUR_CLOUDFLARE_ACCOUNT_ID>",
+	// account_id is intentionally not set here — provide it via the CLOUDFLARE_ACCOUNT_ID
+	// environment variable instead (see README), so it never has to be committed.
 	"name": "tracking-link-api",
 	"main": "src/index.ts",
 	"compatibility_date": "2024-11-01",
@@ -17,8 +17,7 @@
 		{
 			"binding": "DB",
 			"database_name": "tracking-link-db",
-			// Replace with the id printed by `wrangler d1 create tracking-link-db`.
-			"database_id": "<YOUR_D1_DATABASE_ID>"
+			"database_id": "ef6b7814-1733-4b0d-bbb5-93b4c80a18db"
 		}
 	],
 	"vars": {
