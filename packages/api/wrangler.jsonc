@@ -2,7 +2,7 @@
 	"$schema": "node_modules/wrangler/config-schema.json",
 	// account_id is intentionally not set here — provide it via the CLOUDFLARE_ACCOUNT_ID
 	// environment variable instead (see README), so it never has to be committed.
-	"name": "tracking-link-api",
+	"name": "trackinglink",
 	"main": "src/index.ts",
 	"compatibility_date": "2024-11-01",
 	"compatibility_flags": ["nodejs_compat"],
