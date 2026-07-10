@@ -11,8 +11,8 @@
 		"deploy": "wrangler deploy --minify",
 		"typecheck": "tsc --noEmit",
 		"cf-typegen": "wrangler types --env-interface CloudflareBindings",
-		"db:apply:local": "wrangler d1 execute tracking-link-db --local --file=./schema.sql",
-		"db:apply:remote": "wrangler d1 execute tracking-link-db --remote --file=./schema.sql"
+		"db:apply:local": "wrangler d1 execute trackinglink-db --local --file=./schema.sql",
+		"db:apply:remote": "wrangler d1 execute trackinglink-db --remote --file=./schema.sql"
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.36.4",

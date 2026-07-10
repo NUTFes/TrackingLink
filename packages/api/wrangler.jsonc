@@ -16,7 +16,7 @@
 	"d1_databases": [
 		{
 			"binding": "DB",
-			"database_name": "tracking-link-db",
+			"database_name": "trackinglink-db",
 			"database_id": "ef6b7814-1733-4b0d-bbb5-93b4c80a18db"
 		}
 	],

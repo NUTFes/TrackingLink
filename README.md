@@ -103,7 +103,7 @@ Requires a Cloudflare account.
 ### 1. Create the remote D1 database
 
 ```sh
-pnpm --filter @tracking-link/api exec wrangler d1 create tracking-link-db
+pnpm --filter @tracking-link/api exec wrangler d1 create trackinglink-db
 ```
 
 Copy the printed `database_id` into `packages/api/wrangler.jsonc`, and set `account_id` at the
