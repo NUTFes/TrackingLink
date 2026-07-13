@@ -23,7 +23,7 @@
 	"vars": {
 		// Comma-separated list of origins allowed to call the admin API from a browser.
 		// Use "*" for local development; restrict this in production.
-		"ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173"
+		"ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,https://trackinglink-web.nutfes-nutmeg9488.workers.dev"
 	}
 	// Secrets (set with `wrangler secret put <NAME>`, never committed):
 	//   JWT_SECRET              - random string used to sign/verify admin session tokens
