@@ -11,8 +11,8 @@
 		"dev:api": "pnpm --filter @tracking-link/api dev",
 		"dev:web": "pnpm --filter @tracking-link/web dev",
 		"build": "pnpm --filter @tracking-link/web build",
-		"deploy:api": "pnpm --filter @tracking-link/api deploy",
-		"deploy:web": "pnpm --filter @tracking-link/web deploy",
+		"deploy:api": "pnpm --filter @tracking-link/api run deploy",
+		"deploy:web": "pnpm --filter @tracking-link/web run deploy",
 		"typecheck": "pnpm -r run typecheck",
 		"lint": "biome check .",
 		"lint:fix": "biome check --write ."
