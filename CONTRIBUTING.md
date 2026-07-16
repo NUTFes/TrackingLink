@@ -35,8 +35,15 @@ Known gaps that are welcome as contributions:
 
 ## Commit style
 
-Plain, descriptive commit messages explaining *why* a change was made are preferred over
-conventional-commits-style prefixes. Keep PRs focused — one logical change per PR.
+Commit messages use a prefix followed by a description in Japanese explaining what changed, e.g.:
+
+```
+[feat] QRコード読み取り機能を追加
+[fix] リダイレクト時のタイムゾーン計算を修正
+```
+
+Common prefixes: `[feat]` (new feature), `[fix]` (bug fix), `[refactor]`, `[docs]`, `[chore]`.
+Keep PRs focused — one logical change per PR.
 
 ## Reporting bugs / requesting features
 
