@@ -1,220 +1,172 @@
 # TrackingLink
 
-A self-hosted QR code link tracker on Cloudflare Workers + D1: print QR codes that redirect to
-a destination URL, log every scan (time, location, user agent, IP), and see the results in a
-small admin dashboard.
+QRコード/リンクのアクセスを記録し、リダイレクトするためのセルフホスト型トラッキングツールです。ポスターやチラシに印刷したQRコードがいつ・どこでスキャンされたかを記録し、管理画面で確認できます。
 
-Originally built in-house for a university festival to track foot traffic from posters/flyers to
-installed QR codes around a venue, and extracted as a standalone, generic project
-([trackable-links-oss](https://github.com/gakusai-UoA/trackable-links-oss), MIT licensed).
-TrackingLink is a rebrand/fork of that project for our own festival's use.
+[trackable-links-oss](https://github.com/gakusai-UoA/trackable-links-oss)(MITライセンス)をベースに、NUTFesの文化祭運用向けにリブランド・改修したものです。
 
-## How it works
+## できること
 
-- A **project** groups QR codes that all redirect to the same destination URL (e.g. one flyer
-  campaign, one poster design).
-- Each **QR code** belongs to a project and has its own **location** label (e.g. "Main entrance",
-  "2F hallway"). Printed QR codes start with no location — the first scan shows a small
-  passcode-gated form so whoever installs the code can label where it ended up.
-- Every scan after that is logged (timestamp, user agent, IP) and redirects (HTTP 301) to the
-  project's destination URL.
-- The admin dashboard shows scan counts per project, a QR code manager (create/print/delete), and
-  an analytics view (scans by hour and by location).
+- **プロジェクト**単位で、同じリダイレクト先URLを持つQRコードをグループ化(例: チラシA、ポスターBなど)
+- 各**QRコード**には**設置場所**ラベルを付けられる(例: 「正門」「2号館前」)。印刷直後のQRコードは場所未設定の状態で、初回スキャン時にパスコード入力付きのフォームが表示され、設置した人がその場で場所を登録できる
+- 場所登録後は、スキャンのたびにアクセスログ(日時・User-Agent・IP)を記録し、301リダイレクトで指定URLへ遷移
+- 管理画面でプロジェクトごとのスキャン数、QRコード管理(作成/印刷/削除)、時間帯×場所別の分析を確認可能
 
 ```
- Visitor scans QR ──▶ GET /?id={qrId} (packages/api) ──▶ log scan ──▶ 301 redirect
+ QRコードをスキャン ──▶ GET /?id={qrId} (packages/api) ──▶ ログ記録 ──▶ 301リダイレクト
                                 │
                                 ▼
-                      D1 database (Projects, QRCodes, AccessLogs)
+                      D1データベース (Projects, QRCodes, AccessLogs)
                                 ▲
                                 │
-        Admin dashboard (packages/web) ──▶ /projects/*, /auth/* (Bearer JWT)
+        管理画面 (packages/web) ──▶ /projects/*, /auth/* (Bearer JWT)
 ```
 
-## Packages
+## 構成
 
-- [`packages/api`](packages/api) — a [Hono](https://hono.dev) Worker: the public redirect
-  endpoint, the location-setup flow, and the authenticated project/QR-code management API. Data
-  lives in a Cloudflare D1 (SQLite) database via [Drizzle ORM](https://orm.drizzle.team).
-- [`packages/web`](packages/web) — a React + Vite + Tailwind admin dashboard that talks to the API
-  over `fetch`. Deployable as static assets (Cloudflare Workers Assets, Pages, or any static host).
+このリポジトリはpnpmワークスペースで、2つの独立したアプリケーションから成ります。デプロイ先が異なる点に注意してください。
 
-## Quick start (local development)
+- [`packages/api`](packages/api) — [Hono](https://hono.dev)製のWorker。QRコードのリダイレクト、場所設定、認証付きのプロジェクト/QRコード管理APIを提供。データはCloudflare D1([Drizzle ORM](https://orm.drizzle.team)経由)に保存。
+  **→ Cloudflare Workersにデプロイ済み**(下記「本番API」参照)
+- [`packages/web`](packages/web) — React + Vite + Tailwindの管理画面(SPA)。`fetch`でAPIと通信する。
+  **→ Cloudflareにはデプロイせず、自作サーバーでホストする**方針
 
-Requires Node 20+ and [pnpm](https://pnpm.io). **A Cloudflare account is *not* needed for local
-development** — `wrangler dev` simulates the Worker and D1 database entirely on your machine
-(Miniflare + a local SQLite file under `.wrangler/state`). You only need a Cloudflare account when
-you get to [Deploy](#deploy).
+## 本番API(デプロイ済み)
+
+| 項目 | 値 |
+| --- | --- |
+| Worker URL | `https://trackinglink.nutfes-nutmeg9488.workers.dev` |
+| Cloudflare Workerプロジェクト名 | `trackinglink` |
+| D1データベース名 | `trackinglink-db` |
+| デプロイ方法 | Cloudflareダッシュボード連携(Workers Builds)。`main`ブランチにpushすると自動デプロイ |
+
+APIの設定・認証情報は以下の2種類に分かれています。
+
+- **`packages/api/wrangler.jsonc`(リポジトリにコミット)**: Worker名、D1バインディング(`database_id`含む)、`ALLOWED_ORIGINS`など。`database_id`はリソースの識別子であり、それ単体では中身にアクセスできないため許容してコミットしています。
+- **Cloudflareダッシュボード側でのみ設定(リポジトリには含まれない)**:
+  - `account_id` → Worker の **Settings → Build → Environment variables** に `CLOUDFLARE_ACCOUNT_ID` として設定
+  - `JWT_SECRET` / `ADMIN_PASSWORD` / `LOCATION_SETUP_PASSCODE` → Worker の **Settings → Variables and Secrets** に Secret(暗号化)として設定
+
+## Web(管理画面)のセットアップ
+
+Webは静的サイト(SPA)としてビルドされ、Cloudflareとは別のサーバーで配信します。ローカル開発でも自作サーバーでの本番運用でも、**同じ本番API(`https://trackinglink.nutfes-nutmeg9488.workers.dev`)を参照する**構成にしています。
+
+### 前提
+
+- Node.js 20以上
+- [pnpm](https://pnpm.io)(未インストールの場合は `npx pnpm@9.15.0 <コマンド>` のように `npx` 経由でも実行できます)
+
+### 1. リポジトリのclone・依存関係のインストール
 
 ```sh
+git clone git@github.com:NUTFes/TrackingLink.git
+cd TrackingLink
 pnpm install
 ```
 
-### 1. Apply the schema to the local D1 database
+ワークスペース全体(`packages/api`と`packages/web`)の依存関係が一括でインストールされます。
 
-No `wrangler d1 create` or Cloudflare login required for this step — it just initializes the local
-SQLite file that Miniflare uses:
-
-```sh
-pnpm --filter @tracking-link/api run db:apply:local
-```
-
-### 2. Configure local secrets
-
-This repo already ships `packages/api/.dev.vars` with local-only dev defaults, so you can skip
-straight to [step 3](#3-run-locally). To use your own values instead:
+### 2. ローカルで開発する場合
 
 ```sh
-cp packages/api/.dev.vars.example packages/api/.dev.vars
+pnpm --filter @tracking-link/web dev
 ```
 
-Edit `packages/api/.dev.vars` and set:
+`http://localhost:5173` で管理画面が起動し、`packages/web/.env.local` に設定された本番API(`VITE_API_URL`)へ接続します。`ADMIN_PASSWORD`(Cloudflareに設定した値)でログインしてください。
 
-| Variable                   | Purpose                                                                 |
-| --------------------------- | ------------------------------------------------------------------------ |
-| `JWT_SECRET`                | Signs/verifies admin session tokens. Generate with `openssl rand -base64 48`. |
-| `ADMIN_PASSWORD`            | The password used to log in to the admin dashboard.                    |
-| `LOCATION_SETUP_PASSCODE`   | Shared passcode required to label a QR code's location after printing. |
-
-### 3. Run locally
+`.env.local`が無い場合は以下のように作成してください。
 
 ```sh
-pnpm dev
+echo "VITE_API_URL=https://trackinglink.nutfes-nutmeg9488.workers.dev" > packages/web/.env.local
 ```
 
-This runs the API on `http://localhost:8789` and the dashboard on `http://localhost:5173`. Copy
-`packages/web/.env.example` to `packages/web/.env.local` if you need to point the dashboard at a
-different API URL.
+### 3. 自作サーバーへの本番デプロイ
 
-Log in at `http://localhost:5173` with the `ADMIN_PASSWORD` from `packages/api/.dev.vars`. Out of
-the box (unmodified `.dev.vars`) that's:
-
-```
-password: dev-admin-password
-```
-
-**Do not reuse these `.dev.vars` values in production.** Before deploying, create a real D1
-database and set real secrets as described below.
-
-## Deploy
-
-Requires a Cloudflare account.
-
-### 1. Create the remote D1 database
+本番ビルド時は `packages/web/.env.production` の値(既にリポジトリにコミット済み、`VITE_API_URL=https://trackinglink.nutfes-nutmeg9488.workers.dev`)が自動的に使われます。
 
 ```sh
-pnpm --filter @tracking-link/api exec wrangler d1 create trackinglink-db
+pnpm --filter @tracking-link/web build
 ```
 
-Copy the printed `database_id` into `packages/api/wrangler.jsonc`, and set `account_id` at the
-top of that file to your own Cloudflare account id (`wrangler whoami`).
+`packages/web/dist/` に静的ファイル一式が出力されるので、これを自作サーバー上の任意のWebサーバー(nginx、Apache、Node製の静的サーバーなど)で配信してください。
 
-Apply the schema to it:
+**注意**: このアプリはReact Routerによるクライアントサイドルーティングを使用したSPAです。存在しないパス(`/links`など)へ直接アクセス・リロードされた場合に `index.html` を返すよう、**SPAフォールバック設定**をWebサーバー側で行ってください(例: nginxなら`try_files $uri /index.html;`)。
 
-```sh
-pnpm --filter @tracking-link/api run db:apply:remote
+### 4. CORSの設定(重要・要対応)
+
+自作サーバーのドメインが決まったら、`packages/api/wrangler.jsonc` の `ALLOWED_ORIGINS` に追加してcommit・pushしてください(pushすると自動で本番APIに反映されます)。
+
+```jsonc
+"vars": {
+    "ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,https://<自作サーバーのドメイン>"
+}
 ```
 
-### 2. Set production secrets
+これを設定しないと、自作サーバー上のWebからAPIへのリクエストがブラウザ側でブロックされます(現時点ではドメイン未定のため、localhost分のみ許可されています)。
 
-```sh
-pnpm --filter @tracking-link/api exec wrangler secret put JWT_SECRET
-pnpm --filter @tracking-link/api exec wrangler secret put ADMIN_PASSWORD
-pnpm --filter @tracking-link/api exec wrangler secret put LOCATION_SETUP_PASSCODE
-```
+## 認証
 
-Use different, strong values from the local `.dev.vars` — generate `JWT_SECRET` with
-`openssl rand -base64 48`.
+外部の認証プロバイダは使わず、単一の共有パスワード(`ADMIN_PASSWORD`)方式です。`POST /auth/login`でパスワードを渡すと、24時間有効なHS256 JWTが発行され、以降のリクエストで`Authorization: Bearer <token>`として使用します。
 
-### 3. Deploy
-
-```sh
-pnpm deploy:api   # deploys packages/api with `wrangler deploy`
-pnpm deploy:web   # builds and deploys packages/web as static assets
-```
-
-Both `wrangler.jsonc` files have a commented-out `routes` block if you want to put them on a
-custom domain instead of the default `workers.dev` subdomain. Set `VITE_API_URL` (via `.env`
-or your CI) to the deployed API URL before building `packages/web`.
-
-## Authentication
-
-There's no external identity provider by default — the admin dashboard uses a single shared
-`ADMIN_PASSWORD`. `POST /auth/login` exchanges it for a short-lived (24h) HS256 JWT that carries
-the full permission bitmask; the dashboard sends it back as `Authorization: Bearer <token>` on
-every request.
-
-This lives behind one seam so it's easy to replace — [`packages/api/src/auth/`](packages/api/src/auth):
+認証ロジックは差し替えやすいよう1箇所にまとまっています([`packages/api/src/auth/`](packages/api/src/auth)):
 
 ```
 auth/
-├── types.ts       # Verifier type + Bindings/AuthUser/HonoEnv — the contract everything else depends on
-├── local.ts        # the built-in single-admin-password Verifier (signLocalSession/verifyLocalSession)
-├── middleware.ts    # createAuthMiddleware(verifier) — turns any Verifier into Hono middleware
-└── index.ts        # re-exports all of the above
+├── types.ts       # Verifier型 + Bindings/AuthUser/HonoEnv —全体が依存する契約
+├── local.ts        # 組み込みの単一パスワード認証(signLocalSession/verifyLocalSession)
+├── middleware.ts    # createAuthMiddleware(verifier) — VerifierをHonoミドルウェア化
+└── index.ts        # 上記の再エクスポート
 ```
 
-A `Verifier` is just `(token, env) => Promise<{ sub, permissions } | null>`. To plug in a real
-identity provider (Auth0, Clerk, your org's SSO, a per-user database, ...), write a function with
-that signature and pass it to `createAuthMiddleware` in place of the built-in `verifyLocalSession`
-— see the worked example in [`auth/types.ts`](packages/api/src/auth/types.ts). Nothing else in the
-codebase needs to change: every route only depends on `c.get('user')` resolving to
-`{ sub, permissions }`, not on how it got there. `POST /auth/login` and `GET /auth/me` in
-[`routes/auth.ts`](packages/api/src/routes/auth.ts) are themselves just the default login flow —
-replace or remove them if your provider handles login differently (e.g. an OAuth redirect).
+将来Auth0やClerk、独自SSOなどに差し替える場合は、`(token, env) => Promise<{ sub, permissions } | null>` というシグネチャの関数を実装し、`createAuthMiddleware`に渡すだけで済みます。
 
-### Permissions
+### 権限(Permissions)
 
-Four independent bits, combined into one bitmask (see
-[`packages/api/src/permissions.ts`](packages/api/src/permissions.ts)):
+4つの独立したビットの組み合わせです([`packages/api/src/permissions.ts`](packages/api/src/permissions.ts)):
 
-| Bit  | Value | Grants |
-| ---- | ----- | ------ |
-| `TRACKING_LINK_VIEW`      | 1 | List projects and QR codes |
-| `TRACKING_LINK_EDIT`      | 2 | Create projects/QR codes, delete QR codes you created |
-| `TRACKING_LINK_ANALYTICS` | 4 | View the analytics dashboard |
-| `TRACKING_LINK_DELETE`    | 8 | Delete any project or QR code |
+| ビット | 値 | 権限内容 |
+| --- | --- | --- |
+| `TRACKING_LINK_VIEW` | 1 | プロジェクト・QRコードの一覧参照 |
+| `TRACKING_LINK_EDIT` | 2 | プロジェクト・QRコードの作成、自分が作ったQRコードの削除 |
+| `TRACKING_LINK_ANALYTICS` | 4 | 分析画面の閲覧 |
+| `TRACKING_LINK_DELETE` | 8 | 任意のプロジェクト・QRコードの削除 |
 
-The built-in single-admin login always grants all four. If you add multi-user auth, issue a
-`permissions` integer per user from whatever subset of these bits they should hold.
+現在の単一管理者ログインは、常にこの4つ全てを付与します。
 
-## API reference
+## APIリファレンス
 
-All `/projects/*` routes require `Authorization: Bearer <token>`.
+`/projects/*` 配下はすべて `Authorization: Bearer <token>` が必要です。
 
-| Method | Path                              | Auth                | Description |
-| ------ | ---------------------------------- | -------------------- | ----------- |
-| GET    | `/?id={qrId}`                      | none                 | Scan a QR code: log the visit and redirect, or show the location-setup form |
-| GET    | `/view/:qrId`                      | none                 | Human-readable info page for a QR code |
-| POST   | `/api/set-location`                | passcode             | Label a QR code's location for the first time |
-| POST   | `/api/edit-location/:qrId`         | passcode             | Re-label a QR code's location |
-| POST   | `/auth/login`                      | none                 | Exchange `ADMIN_PASSWORD` for a session token |
-| GET    | `/auth/me`                         | Bearer               | Resolve the current session |
-| GET    | `/projects`                        | Bearer               | Paginated project list with scan counts |
-| POST   | `/projects`                        | Bearer               | Create a project |
-| GET    | `/projects/:id`                    | Bearer               | Project detail |
-| PUT    | `/projects/:id`                    | Bearer               | Update a project |
-| DELETE | `/projects/:id`                    | Bearer + `DELETE`    | Delete a project (QR codes cascade) |
-| GET    | `/projects/:id/qrcodes`            | Bearer               | Paginated QR codes for a project |
-| POST   | `/projects/:id/qrcodes`            | Bearer               | Create a QR code |
-| GET    | `/projects/:id/access-stats`       | Bearer               | Scan counts grouped by hour × location |
-| GET    | `/projects/:id/access-logs`        | Bearer               | Paginated raw scan log |
-| GET    | `/projects/qrcodes`                | Bearer               | All QR codes across all projects |
-| GET    | `/projects/qrcodes/:id`            | Bearer               | Single QR code |
-| PUT    | `/projects/qrcodes/:id`            | Bearer               | Update a QR code's location |
-| DELETE | `/projects/qrcodes/:id`            | Bearer + `DELETE`/own | Delete a QR code (and its scan log) |
+| Method | Path | 認証 | 説明 |
+| --- | --- | --- | --- |
+| GET | `/?id={qrId}` | 不要 | QRコードスキャン。アクセスを記録してリダイレクト、または場所未設定なら設定フォームを表示 |
+| GET | `/view/:qrId` | 不要 | QRコードの情報を人間が読める形で表示するページ |
+| POST | `/api/set-location` | パスコード | QRコードの設置場所を初めて登録する |
+| POST | `/api/edit-location/:qrId` | パスコード | QRコードの設置場所を再登録する |
+| POST | `/auth/login` | 不要 | `ADMIN_PASSWORD`をセッショントークンと交換する |
+| GET | `/auth/me` | Bearer | 現在のセッション情報を取得 |
+| GET | `/projects` | Bearer | プロジェクト一覧(ページネーション、スキャン数付き) |
+| POST | `/projects` | Bearer | プロジェクトを作成 |
+| GET | `/projects/:id` | Bearer | プロジェクト詳細 |
+| PUT | `/projects/:id` | Bearer | プロジェクトを更新 |
+| DELETE | `/projects/:id` | Bearer + `DELETE`権限 | プロジェクトを削除(QRコードも連動して削除) |
+| GET | `/projects/:id/qrcodes` | Bearer | プロジェクト内のQRコード一覧(ページネーション) |
+| POST | `/projects/:id/qrcodes` | Bearer | QRコードを作成 |
+| GET | `/projects/:id/access-stats` | Bearer | 時間帯×場所別のスキャン数集計 |
+| GET | `/projects/:id/access-logs` | Bearer | 生のスキャンログ(ページネーション) |
+| GET | `/projects/qrcodes` | Bearer | 全プロジェクト横断のQRコード一覧 |
+| GET | `/projects/qrcodes/:id` | Bearer | QRコード単体の情報 |
+| PUT | `/projects/qrcodes/:id` | Bearer | QRコードの設置場所を更新 |
+| DELETE | `/projects/qrcodes/:id` | Bearer + `DELETE`権限/自分が作成したもの | QRコードを削除(スキャンログも削除) |
 
-## Not included
+## 含まれていない機能
 
-A couple of features from the original internal tool were left out of this extraction because
-they depended on the host organization's internal infrastructure or were already broken:
+元になった内部ツールの一部機能は、組織固有のインフラに依存していたため今回のプロジェクトには含まれていません。
 
-- **LINE Bot / LIFF QR scanner** — a webhook integration for scanning codes from inside LINE.
-- **Receipt printer integration** — printing QR labels directly to a local Epson ESC/POS printer
-  bridge running on the operator's machine.
+- **LINE Bot / LIFF QRスキャナー** — LINE内からQRコードをスキャンするWebhook連携
+- **レシートプリンター連携** — Epson ESC/POSプリンターへ直接QRラベルを印刷する機能
 
-Both are reasonable things to add back as optional features — PRs welcome.
+必要になれば追加実装も可能です。
 
-## License
+## ライセンス
 
-MIT — see [LICENSE](LICENSE).
+MIT — [LICENSE](LICENSE)参照。

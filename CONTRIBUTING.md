@@ -4,9 +4,8 @@ Thanks for considering a contribution.
 
 ## Getting set up
 
-Follow the [Quick start](README.md#quick-start-local-development) in the README — it covers
-installing dependencies, initializing the local D1 database, and running both packages with
-`pnpm dev`.
+Follow the "Web(管理画面)のセットアップ" section in [README.md](README.md) (in Japanese) — it
+covers installing dependencies and running `packages/web` locally against the deployed API.
 
 ## Before opening a PR
 
@@ -31,8 +30,8 @@ Known gaps that are welcome as contributions:
 - A real test suite (`vitest` is already used elsewhere in the ecosystem and would fit naturally).
 - The LINE Bot/LIFF QR scanner and receipt-printer (ePOS) integrations mentioned in the README's
   "Not included" section.
-- Additional `Verifier` implementations under `packages/api/src/auth/` (see [Authentication](README.md#authentication)) for
-  real identity providers.
+- Additional `Verifier` implementations under `packages/api/src/auth/` (see the "認証" section in
+  [README.md](README.md)) for real identity providers.
 
 ## Commit style
 

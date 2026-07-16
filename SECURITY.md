@@ -2,16 +2,15 @@
 
 ## Reporting a vulnerability
 
-Please report security issues privately using GitHub's Security Advisories
+Please report security issues privately using GitHub's
+[Security Advisories](https://github.com/NUTFes/TrackingLink/security/advisories/new)
 ("Report a vulnerability" on the Security tab) rather than opening a public issue.
-<!-- TODO: once this project has its own GitHub repository, link it here, e.g.
-     https://github.com/<org>/TrackingLink/security/advisories/new -->
 
 
 ## Known security tradeoffs
 
-These are deliberate simplifications documented for transparency, not oversights — see
-[Authentication](README.md#authentication) for how to replace them:
+These are deliberate simplifications documented for transparency, not oversights — see the
+"認証" section in [README.md](README.md) for how to replace them:
 
 - **Single shared admin password**, not per-user accounts. Anyone with the password has full
   access to every project and QR code.
