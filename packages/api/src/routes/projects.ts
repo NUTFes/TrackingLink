@@ -66,11 +66,11 @@ projectsApp.get('/qrcodes/:id', async (c) => {
 	return c.json(qrCode);
 });
 
-// GET /projects — paginated project list with access counts
+// GET /projects — paginated project list with access and QR code counts
 projectsApp.get('/', async (c) => {
 	const { limit, offset } = parsePagination(c.req.query());
 	const db = getDb(c.env.DB);
-	const [rows, totalRows, counts] = await Promise.all([
+	const [rows, totalRows, accessCounts, qrCounts] = await Promise.all([
 		db.select().from(schema.projects).limit(limit).offset(offset).all(),
 		db.select({ total: count() }).from(schema.projects),
 		db
@@ -78,9 +78,17 @@ projectsApp.get('/', async (c) => {
 			.from(schema.accessLogs)
 			.groupBy(schema.accessLogs.projectId)
 			.all(),
+		db
+			.select({ projectId: schema.qrCodes.projectId, qrCodeCount: count() })
+			.from(schema.qrCodes)
+			.groupBy(schema.qrCodes.projectId)
+			.all(),
 	]);
-	const countMap = Object.fromEntries(
-		counts.map((row) => [row.projectId, row.accessCount]),
+	const accessCountMap = Object.fromEntries(
+		accessCounts.map((row) => [row.projectId, row.accessCount]),
+	);
+	const qrCountMap = Object.fromEntries(
+		qrCounts.map((row) => [row.projectId, row.qrCodeCount]),
 	);
 	return c.json({
 		data: rows.map((p) => ({
@@ -90,7 +98,8 @@ projectsApp.get('/', async (c) => {
 			destinationUrl: p.destinationUrl,
 			createdAt: p.createdAt,
 			adminUserId: p.adminUserId,
-			accessCount: countMap[p.projectId] ?? 0,
+			accessCount: accessCountMap[p.projectId] ?? 0,
+			qrCodeCount: qrCountMap[p.projectId] ?? 0,
 		})),
 		total: totalRows[0]?.total ?? 0,
 	});
@@ -303,6 +312,11 @@ function toCsvRow(values: (string | null)[]): string {
 
 // POST /projects/:id/qrcodes — create a QR code for a project
 projectsApp.post('/:id/qrcodes', async (c) => {
+	const user = c.get('user');
+	if (!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_EDIT)) {
+		return c.json({ error: 'TRACKING_LINK_EDIT permission required' }, 403);
+	}
+
 	const projectId = c.req.param('id');
 	const parsed = createQRCodeBodySchema.safeParse({
 		...(await c.req.json().catch(() => ({}))),
@@ -316,7 +330,6 @@ projectsApp.post('/:id/qrcodes', async (c) => {
 	}
 
 	const { name, medium, location } = parsed.data;
-	const user = c.get('user');
 	const qrId = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
 
@@ -349,6 +362,11 @@ projectsApp.post('/:id/qrcodes', async (c) => {
 
 // PUT /projects/qrcodes/:id — update a QR code's name/medium/location
 projectsApp.put('/qrcodes/:id', async (c) => {
+	const user = c.get('user');
+	if (!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_EDIT)) {
+		return c.json({ error: 'TRACKING_LINK_EDIT permission required' }, 403);
+	}
+
 	const qrId = c.req.param('id');
 	const parsed = updateQRCodeBodySchema.safeParse(
 		await c.req.json().catch(() => null),

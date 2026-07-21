@@ -27,6 +27,7 @@ interface Project {
 	adminUserId: string;
 	projectId: string;
 	accessCount: number;
+	qrCodeCount: number;
 }
 
 const PAGE_SIZE = 10;
@@ -130,9 +131,18 @@ function ProjectCard({
 		<div className="border-b last:border-0 px-4 py-4 hover:bg-muted/30 transition-colors">
 			<div className="flex items-start justify-between gap-2 mb-2">
 				<p className="font-medium text-sm leading-snug">{project.name}</p>
-				<span className="flex items-center gap-1 text-xs text-muted-foreground tabular-nums shrink-0">
-					<ScanLine className="h-3.5 w-3.5" />
-					{project.accessCount.toLocaleString()}
+				<span className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums shrink-0">
+					<span
+						className="flex items-center gap-1"
+						title={t('common.qrCodeCount')}
+					>
+						<QrCode className="h-3.5 w-3.5" />
+						{project.qrCodeCount.toLocaleString()}
+					</span>
+					<span className="flex items-center gap-1" title={t('common.scans')}>
+						<ScanLine className="h-3.5 w-3.5" />
+						{project.accessCount.toLocaleString()}
+					</span>
 				</span>
 			</div>
 			<a
@@ -479,6 +489,9 @@ function ManageProjectsContent() {
 											{t('common.destinationUrl')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											{t('common.qrCodeCount')}
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
 											{t('common.scans')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
@@ -508,6 +521,12 @@ function ManageProjectsContent() {
 													</span>
 													<ExternalLink className="h-3 w-3 flex-shrink-0" />
 												</a>
+											</td>
+											<td className="px-5 py-3">
+												<span className="flex items-center gap-1.5 text-sm tabular-nums">
+													<QrCode className="h-3.5 w-3.5 text-muted-foreground" />
+													{project.qrCodeCount.toLocaleString()}
+												</span>
 											</td>
 											<td className="px-5 py-3">
 												<span className="flex items-center gap-1.5 text-sm tabular-nums">

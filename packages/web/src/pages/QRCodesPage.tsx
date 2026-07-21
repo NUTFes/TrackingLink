@@ -311,6 +311,7 @@ function QRCodesContent() {
 	const [newMedium, setNewMedium] = useState('');
 	const [newLocation, setNewLocation] = useState('');
 	const [showForm, setShowForm] = useState(false);
+	const [formError, setFormError] = useState<string | null>(null);
 	const [editingQR, setEditingQR] = useState<QRCode | null>(null);
 	const [currentPage, setCurrentPage] = useState(1);
 	const [dialogQR, setDialogQR] = useState<QRCode | null>(null);
@@ -354,6 +355,7 @@ function QRCodesContent() {
 		setNewLocation('');
 		setEditingQR(null);
 		setShowForm(false);
+		setFormError(null);
 	};
 
 	const openCreateForm = () => {
@@ -366,6 +368,7 @@ function QRCodesContent() {
 		setNewLocation('');
 		setEditingQR(null);
 		setShowForm(true);
+		setFormError(null);
 	};
 
 	const openEditForm = (qr: QRCode) => {
@@ -374,6 +377,7 @@ function QRCodesContent() {
 		setNewLocation(qr.location);
 		setEditingQR(qr);
 		setShowForm(true);
+		setFormError(null);
 	};
 
 	const handleSubmit = async (e: FormEvent) => {
@@ -385,7 +389,7 @@ function QRCodesContent() {
 		if (!name || !medium || !location) return;
 
 		setIsSaving(true);
-		setError(null);
+		setFormError(null);
 		try {
 			const url = editingQR
 				? `${TRACKING_LINK_API_URL}/projects/qrcodes/${editingQR.id}`
@@ -408,7 +412,7 @@ function QRCodesContent() {
 				setCurrentPage(1);
 			}
 		} catch (e) {
-			setError(
+			setFormError(
 				e instanceof Error
 					? e.message
 					: editingQR
@@ -538,6 +542,11 @@ function QRCodesContent() {
 								/>
 							</div>
 						</div>
+						{formError && (
+							<p className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+								{formError}
+							</p>
+						)}
 						<div className="flex items-center gap-3">
 							<button
 								type="submit"
