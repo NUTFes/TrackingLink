@@ -2,16 +2,8 @@ import { eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import { getConnInfo } from 'hono/cloudflare-workers';
 import { html } from 'hono/html';
-import * as z from 'zod';
 import type { HonoEnv } from '../auth';
 import { getDb, schema } from '../db';
-import { locationSetupHTML } from '../location-setup-html';
-
-const setLocationBodySchema = z.object({
-	qrId: z.string().min(1),
-	passcode: z.string().min(1),
-	location: z.string().min(1),
-});
 
 const forwardApp = new Hono<HonoEnv>();
 
@@ -60,13 +52,7 @@ forwardApp.get('/', async (c) => {
 		.get();
 	if (!project) return c.text('Project not found', 404);
 
-	// No location set yet — show the setup form instead of redirecting.
-	const location = qrCode.location?.trim();
-	if (!location || location === 'unset') {
-		return c.html(locationSetupHTML(id, project.name), 200, {
-			'Cache-Control': 'no-store',
-		});
-	}
+	const location = qrCode.location;
 
 	if (isLinkPreviewBot) {
 		const accessedAt = new Date().toISOString();
@@ -100,32 +86,6 @@ forwardApp.get('/', async (c) => {
 	}
 
 	return c.redirect(project.destinationUrl, 301);
-});
-
-// POST /api/set-location — label a freshly-installed QR code (passcode-gated, no login required).
-forwardApp.post('/api/set-location', async (c) => {
-	const parsed = setLocationBodySchema.safeParse(
-		await c.req.json().catch(() => null),
-	);
-	if (!parsed.success) {
-		return c.json({ message: 'qrId, passcode and location are required' }, 400);
-	}
-	const { qrId, passcode, location } = parsed.data;
-
-	if (passcode !== c.env.LOCATION_SETUP_PASSCODE) {
-		return c.json({ message: 'Incorrect passcode' }, 401);
-	}
-
-	const db = getDb(c.env.DB);
-	const result = await db
-		.update(schema.qrCodes)
-		.set({ location: location.trim() })
-		.where(eq(schema.qrCodes.id, qrId));
-
-	if (result.meta.changes === 0) {
-		return c.json({ message: 'QR code not found' }, 404);
-	}
-	return c.json({ message: 'Location saved' }, 200);
 });
 
 export default forwardApp;

@@ -6,7 +6,6 @@ import { LocaleProvider } from './lib/i18n';
 import CreateProjectPage from './pages/CreateProjectPage';
 import { LoginPage } from './pages/LoginPage';
 import ManageProjectsPage from './pages/ManageProjectsPage';
-import ProjectAnalyticsPage from './pages/ProjectAnalyticsPage';
 import QRCodesPage from './pages/QRCodesPage';
 
 export default function App() {
@@ -43,16 +42,6 @@ export default function App() {
 								<ProtectedRoute>
 									<AppLayout>
 										<QRCodesPage />
-									</AppLayout>
-								</ProtectedRoute>
-							}
-						/>
-						<Route
-							path="/links/:id/analytics"
-							element={
-								<ProtectedRoute>
-									<AppLayout>
-										<ProjectAnalyticsPage />
 									</AppLayout>
 								</ProtectedRoute>
 							}

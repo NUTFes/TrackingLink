@@ -1,14 +1,16 @@
 import {
-	BarChart2,
 	ChevronLeft,
 	ChevronRight,
+	Download,
 	ExternalLink,
+	Loader,
+	Pencil,
 	Plus,
 	QrCode,
 	ScanLine,
 	Trash2,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
 import { PermissionGuard } from '../components/PermissionGuard';
@@ -106,13 +108,21 @@ function Pagination({
 
 function ProjectCard({
 	project,
+	canEdit,
 	canAnalytics,
 	canDelete,
+	isDownloading,
+	onEdit,
+	onDownloadCsv,
 	onDelete,
 }: {
 	project: Project;
+	canEdit: boolean;
 	canAnalytics: boolean;
 	canDelete: boolean;
+	isDownloading: boolean;
+	onEdit: () => void;
+	onDownloadCsv: () => void;
 	onDelete: () => void;
 }) {
 	const { t } = useTranslation();
@@ -148,14 +158,30 @@ function ProjectCard({
 						<QrCode className="h-3.5 w-3.5" />
 						{t('projects.qrCodesLink')}
 					</Link>
-					{canAnalytics && (
-						<Link
-							to={`/links/${project.projectId}/analytics`}
+					{canEdit && (
+						<button
+							type="button"
+							onClick={onEdit}
 							className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 transition-colors"
 						>
-							<BarChart2 className="h-3.5 w-3.5" />
-							{t('projects.analyticsLink')}
-						</Link>
+							<Pencil className="h-3.5 w-3.5" />
+							{t('common.edit')}
+						</button>
+					)}
+					{canAnalytics && (
+						<button
+							type="button"
+							onClick={onDownloadCsv}
+							disabled={isDownloading}
+							className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 disabled:opacity-50 transition-colors"
+						>
+							{isDownloading ? (
+								<Loader className="h-3.5 w-3.5 animate-spin" />
+							) : (
+								<Download className="h-3.5 w-3.5" />
+							)}
+							{t('projects.csvDownloadLink')}
+						</button>
 					)}
 					{canDelete && (
 						<button
@@ -194,6 +220,11 @@ function ManageProjectsContent() {
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
 	const [currentPage, setCurrentPage] = useState(1);
+	const [downloadingId, setDownloadingId] = useState<string | null>(null);
+	const [editingProject, setEditingProject] = useState<Project | null>(null);
+	const [editName, setEditName] = useState('');
+	const [editUrl, setEditUrl] = useState('');
+	const [isSaving, setIsSaving] = useState(false);
 
 	const fetchProjects = useCallback(
 		async (page: number) => {
@@ -219,6 +250,79 @@ function ManageProjectsContent() {
 	useEffect(() => {
 		fetchProjects(currentPage);
 	}, [fetchProjects, currentPage]);
+
+	const handleDownloadCsv = async (project: Project) => {
+		setDownloadingId(project.projectId);
+		setError(null);
+		try {
+			const res = await authFetch(
+				`${TRACKING_LINK_API_URL}/projects/${project.projectId}/access-logs/csv`,
+			);
+			if (!res.ok) {
+				throw new Error(
+					res.status === 403
+						? t('csvExport.disabled')
+						: t('csvExport.downloadFailed'),
+				);
+			}
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `access-logs-${project.projectId}.csv`;
+			a.click();
+			URL.revokeObjectURL(url);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : t('csvExport.downloadFailed'));
+		} finally {
+			setDownloadingId(null);
+		}
+	};
+
+	const openEditForm = (project: Project) => {
+		setEditingProject(project);
+		setEditName(project.name);
+		setEditUrl(project.destinationUrl);
+	};
+
+	const closeEditForm = () => {
+		setEditingProject(null);
+		setEditName('');
+		setEditUrl('');
+	};
+
+	const handleEditSubmit = async (e: FormEvent) => {
+		e.preventDefault();
+		if (!editingProject) return;
+		const projectName = editName.trim();
+		const destinationUrl = editUrl.trim();
+		if (!projectName || !destinationUrl) return;
+
+		setIsSaving(true);
+		setError(null);
+		try {
+			const res = await authFetch(
+				`${TRACKING_LINK_API_URL}/projects/${editingProject.projectId}`,
+				{
+					method: 'PUT',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify({ projectName, destinationUrl }),
+				},
+			);
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({}));
+				throw new Error(
+					(data as { error?: string }).error ?? `HTTP ${res.status}`,
+				);
+			}
+			closeEditForm();
+			await fetchProjects(currentPage);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : t('projects.editFailed'));
+		} finally {
+			setIsSaving(false);
+		}
+	};
 
 	const handleDeleteProject = async (projectId: string) => {
 		if (!confirm(t('projects.deleteConfirm'))) return;
@@ -259,6 +363,67 @@ function ManageProjectsContent() {
 				</div>
 			)}
 
+			{canEdit && editingProject && (
+				<div className="mb-6 rounded-lg border bg-card p-4 md:p-5 shadow-sm">
+					<h2 className="mb-4 font-semibold">{t('projects.editFormTitle')}</h2>
+					<form onSubmit={handleEditSubmit} className="space-y-3">
+						<div className="grid gap-3 sm:grid-cols-2">
+							<div className="space-y-1.5">
+								<label
+									htmlFor="editProjectName"
+									className="block text-sm font-medium"
+								>
+									{t('createProject.nameLabel')}
+								</label>
+								<input
+									id="editProjectName"
+									type="text"
+									value={editName}
+									onChange={(e) => setEditName(e.target.value)}
+									placeholder={t('createProject.namePlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<label
+									htmlFor="editDestinationUrl"
+									className="block text-sm font-medium"
+								>
+									{t('createProject.urlLabel')}
+								</label>
+								<input
+									id="editDestinationUrl"
+									type="url"
+									value={editUrl}
+									onChange={(e) => setEditUrl(e.target.value)}
+									placeholder={t('createProject.urlPlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
+						</div>
+						<div className="flex items-center gap-3">
+							<button
+								type="submit"
+								disabled={isSaving}
+								className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+							>
+								{isSaving && <Loader className="h-4 w-4 animate-spin" />}
+								{t('common.save')}
+							</button>
+							<button
+								type="button"
+								onClick={closeEditForm}
+								className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted/50 transition-colors"
+							>
+								{t('common.cancel')}
+							</button>
+						</div>
+					</form>
+				</div>
+			)}
+
 			<div className="rounded-lg border bg-card shadow-sm">
 				<div className="border-b p-4 md:p-5">
 					<h2 className="font-semibold">{t('projects.cardTitle')}</h2>
@@ -291,8 +456,12 @@ function ManageProjectsContent() {
 								<ProjectCard
 									key={project.id}
 									project={project}
+									canEdit={canEdit}
 									canAnalytics={canAnalytics}
 									canDelete={canDelete}
+									isDownloading={downloadingId === project.projectId}
+									onEdit={() => openEditForm(project)}
+									onDownloadCsv={() => handleDownloadCsv(project)}
 									onDelete={() => handleDeleteProject(project.projectId)}
 								/>
 							))}
@@ -360,14 +529,30 @@ function ManageProjectsContent() {
 														<QrCode className="h-3 w-3" />
 														{t('projects.qrCodesLink')}
 													</Link>
-													{canAnalytics && (
-														<Link
-															to={`/links/${project.projectId}/analytics`}
+													{canEdit && (
+														<button
+															type="button"
+															onClick={() => openEditForm(project)}
 															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
 														>
-															<BarChart2 className="h-3 w-3" />
-															{t('projects.analyticsLink')}
-														</Link>
+															<Pencil className="h-3 w-3" />
+															{t('common.edit')}
+														</button>
+													)}
+													{canAnalytics && (
+														<button
+															type="button"
+															onClick={() => handleDownloadCsv(project)}
+															disabled={downloadingId === project.projectId}
+															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 disabled:opacity-50 transition-colors"
+														>
+															{downloadingId === project.projectId ? (
+																<Loader className="h-3 w-3 animate-spin" />
+															) : (
+																<Download className="h-3 w-3" />
+															)}
+															{t('projects.csvDownloadLink')}
+														</button>
 													)}
 													{canDelete && (
 														<button
