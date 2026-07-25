@@ -5,7 +5,9 @@
 	"description": "Self-hosted QR code link tracker on Cloudflare Workers + D1.",
 	"license": "MIT",
 	"packageManager": "pnpm@9.15.0",
-	"engines": { "node": ">=20" },
+	"engines": {
+		"node": ">=20"
+	},
 	"scripts": {
 		"dev": "concurrently --names \"api,web\" --prefix \"[{name}]\" \"pnpm --filter @tracking-link/api dev\" \"pnpm --filter @tracking-link/web dev\"",
 		"dev:api": "pnpm --filter @tracking-link/api dev",
@@ -15,7 +17,8 @@
 		"deploy:web": "pnpm --filter @tracking-link/web run deploy",
 		"typecheck": "pnpm -r run typecheck",
 		"lint": "biome check .",
-		"lint:fix": "biome check --write ."
+		"lint:fix": "biome check --write .",
+		"test": "pnpm -r run test"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",
