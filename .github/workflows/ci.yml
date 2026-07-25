@@ -20,3 +20,61 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  # Behavioural smoke test against a real Worker + local D1.
+  #
+  # Gates on behaviour, not numbers: a shared runner cannot produce stable latency
+  # figures, so thresholds here are loose on timing and strict on things like "the
+  # scan endpoint returns 302 with no-store" and "pagination does not repeat rows".
+  # The heavier scenarios (S1–S5) are deliberately NOT in CI — see
+  # docs/load-testing.md.
+  smoke:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: packages/api
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+        working-directory: .
+      - uses: grafana/setup-k6-action@v1
+
+      - name: Apply schema to a local D1
+        run: pnpm exec wrangler d1 execute trackinglink-db --local --file=./schema.sql
+
+      - name: Seed a small dataset
+        run: |
+          node loadtest/seed/generate.mjs --logs=500
+          node loadtest/seed/run.mjs --target=local
+
+      - name: Start the Worker
+        env:
+          # Local-only development secrets; the smoke test needs to log in.
+          JWT_SECRET: ci-smoke-jwt-secret
+          ADMIN_PASSWORD: dev-admin-password
+        run: |
+          printf 'JWT_SECRET=%s\nADMIN_PASSWORD=%s\n' "$JWT_SECRET" "$ADMIN_PASSWORD" > .dev.vars
+          pnpm exec wrangler dev --local --port 8789 --var CSV_EXPORT_ENABLED:true \
+            > wrangler.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:8789/healthz > /dev/null; then
+              echo "worker ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "worker never became ready:"
+          cat wrangler.log
+          exit 1
+
+      - name: Run the smoke scenario
+        run: pnpm loadtest:smoke
+
+      - name: Worker log (on failure)
+        if: failure()
+        run: cat wrangler.log
