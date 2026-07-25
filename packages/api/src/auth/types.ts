@@ -8,6 +8,14 @@ export interface Bindings {
 	ALLOWED_ORIGINS?: string;
 	/** Set to "true" to enable the CSV export endpoint. Defaults to disabled. */
 	CSV_EXPORT_ENABLED?: string;
+	/**
+	 * How the scan endpoint writes its access log. Defaults to "async", which
+	 * takes the D1 write off the response path via waitUntil. Set to "sync" to
+	 * await it instead — an escape hatch that can be flipped from the Cloudflare
+	 * dashboard, without a deploy, if logged writes ever look like they are being
+	 * dropped during an event.
+	 */
+	LOG_WRITE_MODE?: 'async' | 'sync';
 }
 
 export interface AuthUser {
