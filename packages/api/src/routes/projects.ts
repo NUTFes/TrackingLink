@@ -1,4 +1,4 @@
-import { count, desc, eq, inArray } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, lt, lte, or } from 'drizzle-orm';
 import { type Context, Hono } from 'hono';
 import * as z from 'zod';
 import type { HonoEnv } from '../auth';
@@ -428,7 +428,46 @@ projectsApp.get('/:id/access-logs', async (c) => {
 	});
 });
 
-// GET /projects/:id/access-logs/csv — full access log as a CSV download.
+// Default ceiling on one export. The old implementation loaded every row and
+// built a single string in memory: at 100k rows that blows the Workers Free 10ms
+// CPU budget (error 1102) and approaches the 128MB isolate limit, so one click on
+// a busy project could take the Worker down.
+//
+// Overridable via the CSV_MAX_ROWS var so the limit can be raised or lowered from
+// the dashboard without a deploy. If you raise it, raise CSV_PAGE_SIZE too — the
+// two are tied to the subrequest budget below.
+const DEFAULT_MAX_CSV_ROWS = 50_000;
+// Rows per D1 query while streaming. One query is one subrequest, so the cap
+// above costs at most 25 — half of the Workers Free ceiling of 50, leaving room
+// for the count and project lookups. Raise both together or not at all.
+const CSV_PAGE_SIZE = 2_000;
+
+/**
+ * Reads a boolean-ish env var.
+ *
+ * Accepts a real boolean as well as the string form, because `vars` in
+ * wrangler.jsonc is JSON: writing `"CSV_EXPORT_ENABLED": true` instead of
+ * `"true"` is an easy mistake, and a strict `=== 'true'` would then silently
+ * keep the feature off with no hint as to why. Anything unrecognised is off.
+ */
+function isFlagEnabled(value: unknown): boolean {
+	return value === true || value === 'true' || value === '1';
+}
+
+const csvQuerySchema = z.object({
+	// Compared as text against the stored ISO-8601 UTC timestamps, which sort
+	// chronologically. A bare date is widened to cover the whole UTC day.
+	from: z.string().min(4).max(40).optional(),
+	to: z.string().min(4).max(40).optional(),
+});
+
+/** Widens a bare `YYYY-MM-DD` to the start or end of that UTC day. */
+function normalizeBound(value: string, edge: 'start' | 'end'): string {
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+	return edge === 'start' ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
+}
+
+// GET /projects/:id/access-logs/csv — access log as a streamed CSV download.
 // Gated by CSV_EXPORT_ENABLED so it can ship disabled and be turned on later.
 projectsApp.get('/:id/access-logs/csv', async (c) => {
 	// The README documented ANALYTICS as required here; the check was missing.
@@ -439,43 +478,187 @@ projectsApp.get('/:id/access-logs/csv', async (c) => {
 	);
 	if (denied) return denied;
 
-	if (c.env.CSV_EXPORT_ENABLED !== 'true') {
+	if (!isFlagEnabled(c.env.CSV_EXPORT_ENABLED)) {
 		return fail(c, 403, ErrorCodes.CSV_EXPORT_DISABLED);
 	}
 
+	const parsedQuery = csvQuerySchema.safeParse(c.req.query());
+	if (!parsedQuery.success) {
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			details: parsedQuery.error.flatten(),
+		});
+	}
+	const from = parsedQuery.data.from
+		? normalizeBound(parsedQuery.data.from, 'start')
+		: undefined;
+	const to = parsedQuery.data.to
+		? normalizeBound(parsedQuery.data.to, 'end')
+		: undefined;
+
 	const projectId = c.req.param('id');
 	const db = getDb(c.env.DB);
-	const logs = await db
-		.select({
-			accessedAt: schema.accessLogs.accessedAt,
-			name: schema.qrCodes.name,
-			medium: schema.qrCodes.medium,
-			location: schema.qrCodes.location,
-			userAgent: schema.accessLogs.userAgent,
-			ipAddress: schema.accessLogs.ipAddress,
-		})
-		.from(schema.accessLogs)
-		.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
-		.where(eq(schema.accessLogs.projectId, projectId))
-		.orderBy(desc(schema.accessLogs.accessedAt), desc(schema.accessLogs.id))
-		.all();
 
-	const header = ['日時', '名前', '媒体', '場所', 'User Agent', 'IPアドレス'];
-	const rows = logs.map((log) => [
-		log.accessedAt,
-		log.name ?? '',
-		log.medium ?? '',
-		log.location ?? '',
-		log.userAgent ?? '',
-		log.ipAddress ?? '',
+	const rangeFilter = and(
+		eq(schema.accessLogs.projectId, projectId),
+		...(from ? [gte(schema.accessLogs.accessedAt, from)] : []),
+		...(to ? [lte(schema.accessLogs.accessedAt, to)] : []),
+	);
+
+	const [project, countRows] = await Promise.all([
+		db
+			.select({ name: schema.projects.name })
+			.from(schema.projects)
+			.where(eq(schema.projects.projectId, projectId))
+			.get(),
+		db.select({ total: count() }).from(schema.accessLogs).where(rangeFilter),
 	]);
-	const csv = [header, ...rows].map(toCsvRow).join('\r\n');
+	if (!project) return fail(c, 404, ErrorCodes.PROJECT_NOT_FOUND);
 
-	return c.body(`﻿${csv}`, 200, {
-		'Content-Type': 'text/csv; charset=utf-8',
-		'Content-Disposition': `attachment; filename="access-logs-${projectId}.csv"`,
+	const maxRows =
+		Number(c.env.CSV_MAX_ROWS ?? DEFAULT_MAX_CSV_ROWS) || DEFAULT_MAX_CSV_ROWS;
+	const total = countRows[0]?.total ?? 0;
+	if (total > maxRows) {
+		// 413 with the real numbers, so the client can say "narrow the range" and
+		// show how far over the limit the request was — rather than a bare 500 once
+		// the Worker ran out of CPU.
+		return fail(c, 413, ErrorCodes.TOO_MANY_ROWS, {
+			meta: { total, max: maxRows },
+		});
+	}
+
+	const header = [
+		'日時',
+		'名前',
+		'媒体',
+		'場所',
+		'ボット',
+		'User Agent',
+		'IPアドレス',
+	];
+	const encoder = new TextEncoder();
+	// Keyset cursor on (accessed_at, id). OFFSET paging degrades quadratically
+	// over a large table because SQLite has to walk and discard every skipped row;
+	// a cursor turns each page into a bounded index range scan on
+	// idx_access_logs_project_accessed_at.
+	let cursor: { accessedAt: string; id: number } | null = null;
+	let done = false;
+
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			// UTF-8 BOM so Excel on Windows detects the encoding, and CRLF per
+			// RFC 4180 — both preserved from the original implementation.
+			controller.enqueue(encoder.encode(`﻿${toCsvRow(header)}\r\n`));
+		},
+		async pull(controller) {
+			if (done) {
+				controller.close();
+				return;
+			}
+			const rows = await db
+				.select({
+					id: schema.accessLogs.id,
+					accessedAt: schema.accessLogs.accessedAt,
+					isBot: schema.accessLogs.isBot,
+					userAgent: schema.accessLogs.userAgent,
+					ipAddress: schema.accessLogs.ipAddress,
+					name: schema.qrCodes.name,
+					medium: schema.qrCodes.medium,
+					location: schema.qrCodes.location,
+				})
+				.from(schema.accessLogs)
+				.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
+				.where(
+					cursor
+						? and(
+								rangeFilter,
+								or(
+									lt(schema.accessLogs.accessedAt, cursor.accessedAt),
+									and(
+										eq(schema.accessLogs.accessedAt, cursor.accessedAt),
+										lt(schema.accessLogs.id, cursor.id),
+									),
+								),
+							)
+						: rangeFilter,
+				)
+				.orderBy(desc(schema.accessLogs.accessedAt), desc(schema.accessLogs.id))
+				.limit(CSV_PAGE_SIZE)
+				.all();
+
+			if (rows.length === 0) {
+				controller.close();
+				return;
+			}
+
+			controller.enqueue(
+				encoder.encode(
+					`${rows
+						.map((log) =>
+							toCsvRow([
+								log.accessedAt,
+								log.name ?? '',
+								log.medium ?? '',
+								log.location ?? '',
+								log.isBot ? '1' : '0',
+								log.userAgent ?? '',
+								log.ipAddress ?? '',
+							]),
+						)
+						.join('\r\n')}\r\n`,
+				),
+			);
+
+			const last = rows[rows.length - 1];
+			cursor = { accessedAt: last.accessedAt, id: last.id };
+			if (rows.length < CSV_PAGE_SIZE) done = true;
+		},
+	});
+
+	return new Response(stream, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/csv; charset=utf-8',
+			'Content-Disposition': contentDisposition(
+				csvFilename(project.name, from, to),
+			),
+			'Cache-Control': 'no-store',
+		},
 	});
 });
+
+/** `アクセスログ_造形大祭2026_2026-07-25.csv`, sanitised for a filesystem. */
+function csvFilename(projectName: string, from?: string, to?: string): string {
+	const safeName =
+		projectName
+			// Characters no filesystem accepts. Japanese is deliberately preserved —
+			// the whole point is that the file is identifiable in a downloads folder.
+			.replace(/[\\/:*?"<>|]/g, '')
+			// Whitespace, including anything exotic, collapses to one underscore.
+			.replace(/\s+/g, '_')
+			.trim()
+			.slice(0, 60) || 'project';
+	const range = [from?.slice(0, 10), to?.slice(0, 10)]
+		.filter(Boolean)
+		.join('_');
+	return `アクセスログ_${safeName}${range ? `_${range}` : ''}.csv`;
+}
+
+/**
+ * Content-Disposition with both an ASCII fallback and an RFC 5987 UTF-8 form.
+ * The old header interpolated a raw UUID, so every download was named
+ * `access-logs-3f2b….csv`.
+ *
+ * The fallback is built by iterating rather than with a regex range so there are
+ * no hex escapes for a formatter to mangle into literal control bytes: anything
+ * outside printable ASCII, plus the quote that would end the header value,
+ * becomes an underscore.
+ */
+function contentDisposition(filename: string): string {
+	const ascii = Array.from(filename)
+		.map((ch) => (ch >= ' ' && ch <= '~' && ch !== '"' ? ch : '_'))
+		.join('');
+	return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
 
 // Escapes a row of values per RFC 4180: quote fields containing a comma,
 // quote, or newline, doubling any embedded quotes.

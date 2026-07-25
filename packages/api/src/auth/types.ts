@@ -6,8 +6,18 @@ export interface Bindings {
 	ADMIN_PASSWORD: string;
 	/** Comma-separated list of origins allowed to call this API from a browser. */
 	ALLOWED_ORIGINS?: string;
-	/** Set to "true" to enable the CSV export endpoint. Defaults to disabled. */
-	CSV_EXPORT_ENABLED?: string;
+	/**
+	 * Set to "true" to enable the CSV export endpoint. Defaults to disabled.
+	 * A real JSON boolean is accepted too — `vars` in wrangler.jsonc is JSON, so
+	 * `true` without quotes is an easy slip and should not silently do nothing.
+	 */
+	CSV_EXPORT_ENABLED?: string | boolean;
+	/**
+	 * Maximum rows one CSV export may contain before it returns 413 and asks the
+	 * caller to narrow the date range. Defaults to 50,000, which costs 25 of the
+	 * Workers Free 50-subrequest budget at the streaming page size.
+	 */
+	CSV_MAX_ROWS?: string | number;
 	/**
 	 * How the scan endpoint writes its access log. Defaults to "async", which
 	 * takes the D1 write off the response path via waitUntil. Set to "sync" to
