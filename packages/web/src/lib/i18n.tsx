@@ -7,6 +7,7 @@ import {
 	useMemo,
 	useState,
 } from 'react';
+import { safeStorage } from './storage';
 
 export type Locale = 'en' | 'ja';
 
@@ -36,6 +37,40 @@ const en: Dictionary = {
 	'common.ip': 'IP',
 	'common.backToProjects': 'Back to projects',
 	'common.genericError': 'Something went wrong',
+	'common.retry': 'Try again',
+	'common.optional': 'optional',
+	'common.medium': 'Medium',
+	'common.bot': 'Bot',
+	'common.deleting': 'Deleting…',
+	'common.saving': 'Saving…',
+	'common.menu': 'Menu',
+
+	// Errors, keyed off the API's error codes so wording lives on the client.
+	'error.network':
+		'Could not reach the server. Check your connection and try again.',
+	'error.unauthorized': 'Your session has expired. Please sign in again.',
+	'error.permission': "You don't have permission to do that.",
+	'error.notOwner': 'You can only change QR codes you created.',
+	'error.invalidBody': 'Please check the highlighted fields.',
+	'error.noFieldsToUpdate': 'Nothing was changed.',
+	'error.projectNotFound':
+		'That project no longer exists. It may have been deleted.',
+	'error.qrNotFound':
+		'That QR code no longer exists. It may have been deleted.',
+	'error.duplicateName':
+		'A QR code with this name already exists in this project.',
+	'error.tooManyRows':
+		'Too many rows ({total}) to export at once. The limit is {max} — narrow the date range.',
+	'error.rateLimited': 'Too many attempts. Please wait a moment and try again.',
+	'error.serverError': 'The server had a problem. Please try again.',
+
+	'validation.required': 'This field is required.',
+	'validation.tooLong': 'Please use {max} characters or fewer.',
+	'validation.url': 'Enter a URL starting with http:// or https://',
+
+	'login.sessionExpired': 'Your session expired. Please sign in again.',
+	'login.retryAfterNetwork':
+		'Could not reach the server. Check your connection.',
 
 	'login.subtitle': 'Sign in with the admin password.',
 	'login.passwordLabel': 'Password',
@@ -124,6 +159,42 @@ const ja: Dictionary = {
 	'common.ip': 'IPアドレス',
 	'common.backToProjects': 'プロジェクト一覧に戻る',
 	'common.genericError': 'エラーが発生しました',
+	'common.retry': '再試行',
+	'common.optional': '任意',
+	'common.medium': '媒体',
+	'common.bot': 'ボット',
+	'common.deleting': '削除中…',
+	'common.saving': '保存中…',
+	'common.menu': 'メニュー',
+
+	// Errors, keyed off the API's error codes so wording lives on the client.
+	'error.network':
+		'サーバーに接続できませんでした。通信環境を確認して再試行してください。',
+	'error.unauthorized':
+		'セッションの有効期限が切れました。再度ログインしてください。',
+	'error.permission': 'この操作を行う権限がありません。',
+	'error.notOwner': '自分が作成したQRコードのみ変更できます。',
+	'error.invalidBody': '入力内容を確認してください。',
+	'error.noFieldsToUpdate': '変更点がありません。',
+	'error.projectNotFound':
+		'このプロジェクトは存在しません。削除された可能性があります。',
+	'error.qrNotFound':
+		'このQRコードは存在しません。削除された可能性があります。',
+	'error.duplicateName': 'この名前のQRコードはこのプロジェクトに既にあります。',
+	'error.tooManyRows':
+		'件数が多すぎます（{total}件）。一度に出力できるのは{max}件までです。期間を絞ってください。',
+	'error.rateLimited':
+		'試行回数が多すぎます。しばらく待ってから再試行してください。',
+	'error.serverError': 'サーバー側で問題が発生しました。再試行してください。',
+
+	'validation.required': 'この項目は必須です。',
+	'validation.tooLong': '{max}文字以内で入力してください。',
+	'validation.url': 'http:// または https:// で始まるURLを入力してください。',
+
+	'login.sessionExpired':
+		'セッションの有効期限が切れました。再度ログインしてください。',
+	'login.retryAfterNetwork':
+		'サーバーに接続できませんでした。通信環境を確認してください。',
 
 	'login.subtitle': '管理者パスワードでログインしてください。',
 	'login.passwordLabel': 'パスワード',
@@ -203,9 +274,15 @@ function interpolate(
 }
 
 function detectDefaultLocale(): Locale {
-	const stored = localStorage.getItem(LOCALE_KEY);
+	// safeStorage, not localStorage: this runs inside a useState initialiser, so a
+	// throw here (Safari Private Browsing, storage blocked) white-screens the app.
+	const stored = safeStorage.get(LOCALE_KEY);
 	if (stored === 'en' || stored === 'ja') return stored;
-	return navigator.language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
+	try {
+		return navigator.language.toLowerCase().startsWith('ja') ? 'ja' : 'en';
+	} catch {
+		return 'en';
+	}
 }
 
 interface LocaleContextValue {
@@ -220,7 +297,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
 	const [locale, setLocale] = useState<Locale>(detectDefaultLocale);
 
 	useEffect(() => {
-		localStorage.setItem(LOCALE_KEY, locale);
+		safeStorage.set(LOCALE_KEY, locale);
 		document.documentElement.lang = locale;
 	}, [locale]);
 

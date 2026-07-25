@@ -1,17 +1,18 @@
 import { TRACKING_LINK_API_URL } from '../config';
+import { safeStorage } from './storage';
 
 const TOKEN_KEY = 'tracking-link.token';
 
 export function getToken(): string | null {
-	return localStorage.getItem(TOKEN_KEY);
+	return safeStorage.get(TOKEN_KEY);
 }
 
 export function setToken(token: string): void {
-	localStorage.setItem(TOKEN_KEY, token);
+	safeStorage.set(TOKEN_KEY, token);
 }
 
 export function clearToken(): void {
-	localStorage.removeItem(TOKEN_KEY);
+	safeStorage.remove(TOKEN_KEY);
 }
 
 /**
