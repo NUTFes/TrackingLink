@@ -4,10 +4,10 @@ export interface Bindings {
 	JWT_SECRET: string;
 	/** Password required to log in to the admin UI/API. Only needed if you keep the default Verifier. */
 	ADMIN_PASSWORD: string;
-	/** Passcode required to label a freshly-printed QR code's location. */
-	LOCATION_SETUP_PASSCODE: string;
 	/** Comma-separated list of origins allowed to call this API from a browser. */
 	ALLOWED_ORIGINS?: string;
+	/** Set to "true" to enable the CSV export endpoint. Defaults to disabled. */
+	CSV_EXPORT_ENABLED?: string;
 }
 
 export interface AuthUser {

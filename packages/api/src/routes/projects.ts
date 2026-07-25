@@ -1,4 +1,4 @@
-import { count, desc, eq, sql } from 'drizzle-orm';
+import { count, desc, eq } from 'drizzle-orm';
 import { Hono } from 'hono';
 import * as z from 'zod';
 import type { HonoEnv } from '../auth';
@@ -17,11 +17,15 @@ const updateProjectBodySchema = z.object({
 
 const createQRCodeBodySchema = z.object({
 	projectId: z.string().min(1, 'projectId is required'),
-	location: z.string().optional(),
+	name: z.string().min(1, 'name is required'),
+	medium: z.string().min(1, 'medium is required'),
+	location: z.string().min(1, 'location is required'),
 });
 
 const updateQRCodeBodySchema = z.object({
-	location: z.string().min(1, 'location is required'),
+	name: z.string().min(1).optional(),
+	medium: z.string().min(1).optional(),
+	location: z.string().min(1).optional(),
 });
 
 // Pagination params, capped at 100 rows/page.
@@ -30,6 +34,14 @@ function parsePagination(query: Record<string, string | undefined>) {
 	const limit = Math.min(Math.max(1, Number(query.limit ?? '10')), 100);
 	const offset = (page - 1) * limit;
 	return { page, limit, offset };
+}
+
+// True if `error` is a SQLite UNIQUE constraint violation, regardless of the
+// exact wrapper D1's driver throws it in.
+function isUniqueConstraintError(error: unknown): boolean {
+	return (
+		error instanceof Error && /UNIQUE constraint failed/i.test(error.message)
+	);
 }
 
 const projectsApp = new Hono<HonoEnv>();
@@ -54,11 +66,11 @@ projectsApp.get('/qrcodes/:id', async (c) => {
 	return c.json(qrCode);
 });
 
-// GET /projects — paginated project list with access counts
+// GET /projects — paginated project list with access and QR code counts
 projectsApp.get('/', async (c) => {
 	const { limit, offset } = parsePagination(c.req.query());
 	const db = getDb(c.env.DB);
-	const [rows, totalRows, counts] = await Promise.all([
+	const [rows, totalRows, accessCounts, qrCounts] = await Promise.all([
 		db.select().from(schema.projects).limit(limit).offset(offset).all(),
 		db.select({ total: count() }).from(schema.projects),
 		db
@@ -66,9 +78,17 @@ projectsApp.get('/', async (c) => {
 			.from(schema.accessLogs)
 			.groupBy(schema.accessLogs.projectId)
 			.all(),
+		db
+			.select({ projectId: schema.qrCodes.projectId, qrCodeCount: count() })
+			.from(schema.qrCodes)
+			.groupBy(schema.qrCodes.projectId)
+			.all(),
 	]);
-	const countMap = Object.fromEntries(
-		counts.map((row) => [row.projectId, row.accessCount]),
+	const accessCountMap = Object.fromEntries(
+		accessCounts.map((row) => [row.projectId, row.accessCount]),
+	);
+	const qrCountMap = Object.fromEntries(
+		qrCounts.map((row) => [row.projectId, row.qrCodeCount]),
 	);
 	return c.json({
 		data: rows.map((p) => ({
@@ -78,7 +98,8 @@ projectsApp.get('/', async (c) => {
 			destinationUrl: p.destinationUrl,
 			createdAt: p.createdAt,
 			adminUserId: p.adminUserId,
-			accessCount: countMap[p.projectId] ?? 0,
+			accessCount: accessCountMap[p.projectId] ?? 0,
+			qrCodeCount: qrCountMap[p.projectId] ?? 0,
 		})),
 		total: totalRows[0]?.total ?? 0,
 	});
@@ -205,27 +226,6 @@ projectsApp.get('/:id/qrcodes', async (c) => {
 	return c.json({ data: qrCodes, total: totalRows[0]?.total ?? 0 });
 });
 
-// GET /projects/:id/access-stats — hour × location aggregation, for the analytics chart
-projectsApp.get('/:id/access-stats', async (c) => {
-	const projectId = c.req.param('id');
-	const db = getDb(c.env.DB);
-	const stats = await db
-		.select({
-			hour: sql<number>`CAST(strftime('%H', ${schema.accessLogs.accessedAt}) AS INTEGER)`,
-			location: sql<string>`COALESCE(${schema.qrCodes.location}, 'unknown')`,
-			count: count(),
-		})
-		.from(schema.accessLogs)
-		.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
-		.where(eq(schema.accessLogs.projectId, projectId))
-		.groupBy(
-			sql`strftime('%H', ${schema.accessLogs.accessedAt})`,
-			schema.qrCodes.location,
-		)
-		.all();
-	return c.json(stats);
-});
-
 // GET /projects/:id/access-logs — paginated, newest-first raw access log
 projectsApp.get('/:id/access-logs', async (c) => {
 	const projectId = c.req.param('id');
@@ -258,8 +258,65 @@ projectsApp.get('/:id/access-logs', async (c) => {
 	});
 });
 
+// GET /projects/:id/access-logs/csv — full access log as a CSV download.
+// Gated by CSV_EXPORT_ENABLED so it can be shipped disabled and turned on later.
+projectsApp.get('/:id/access-logs/csv', async (c) => {
+	if (c.env.CSV_EXPORT_ENABLED !== 'true') {
+		return c.json({ error: 'CSV export is not enabled' }, 403);
+	}
+
+	const projectId = c.req.param('id');
+	const db = getDb(c.env.DB);
+	const logs = await db
+		.select({
+			accessedAt: schema.accessLogs.accessedAt,
+			name: schema.qrCodes.name,
+			medium: schema.qrCodes.medium,
+			location: schema.qrCodes.location,
+			userAgent: schema.accessLogs.userAgent,
+			ipAddress: schema.accessLogs.ipAddress,
+		})
+		.from(schema.accessLogs)
+		.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
+		.where(eq(schema.accessLogs.projectId, projectId))
+		.orderBy(desc(schema.accessLogs.accessedAt))
+		.all();
+
+	const header = ['日時', '名前', '媒体', '場所', 'User Agent', 'IPアドレス'];
+	const rows = logs.map((log) => [
+		log.accessedAt,
+		log.name ?? '',
+		log.medium ?? '',
+		log.location ?? '',
+		log.userAgent ?? '',
+		log.ipAddress ?? '',
+	]);
+	const csv = [header, ...rows].map(toCsvRow).join('\r\n');
+
+	return c.body(`﻿${csv}`, 200, {
+		'Content-Type': 'text/csv; charset=utf-8',
+		'Content-Disposition': `attachment; filename="access-logs-${projectId}.csv"`,
+	});
+});
+
+// Escapes a row of values per RFC 4180: quote fields containing a comma,
+// quote, or newline, doubling any embedded quotes.
+function toCsvRow(values: (string | null)[]): string {
+	return values
+		.map((value) => {
+			const v = value ?? '';
+			return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+		})
+		.join(',');
+}
+
 // POST /projects/:id/qrcodes — create a QR code for a project
 projectsApp.post('/:id/qrcodes', async (c) => {
+	const user = c.get('user');
+	if (!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_EDIT)) {
+		return c.json({ error: 'TRACKING_LINK_EDIT permission required' }, 403);
+	}
+
 	const projectId = c.req.param('id');
 	const parsed = createQRCodeBodySchema.safeParse({
 		...(await c.req.json().catch(() => ({}))),
@@ -272,25 +329,44 @@ projectsApp.post('/:id/qrcodes', async (c) => {
 		);
 	}
 
-	const { location = 'unset' } = parsed.data;
-	const user = c.get('user');
+	const { name, medium, location } = parsed.data;
 	const qrId = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
 
 	const db = getDb(c.env.DB);
-	await db.insert(schema.qrCodes).values({
-		id: qrId,
-		projectId,
-		location,
-		createdAt,
-		creatorId: user?.sub ?? null,
-	});
+	try {
+		await db.insert(schema.qrCodes).values({
+			id: qrId,
+			projectId,
+			name,
+			medium,
+			location,
+			createdAt,
+			creatorId: user?.sub ?? null,
+		});
+	} catch (error) {
+		if (isUniqueConstraintError(error)) {
+			return c.json(
+				{ error: 'この媒体・場所の組み合わせは既に登録されています' },
+				409,
+			);
+		}
+		throw error;
+	}
 
-	return c.json({ id: qrId, projectId, location, createdAt }, 201);
+	return c.json(
+		{ id: qrId, projectId, name, medium, location, createdAt },
+		201,
+	);
 });
 
-// PUT /projects/qrcodes/:id — update a QR code's location
+// PUT /projects/qrcodes/:id — update a QR code's name/medium/location
 projectsApp.put('/qrcodes/:id', async (c) => {
+	const user = c.get('user');
+	if (!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_EDIT)) {
+		return c.json({ error: 'TRACKING_LINK_EDIT permission required' }, 403);
+	}
+
 	const qrId = c.req.param('id');
 	const parsed = updateQRCodeBodySchema.safeParse(
 		await c.req.json().catch(() => null),
@@ -302,13 +378,31 @@ projectsApp.put('/qrcodes/:id', async (c) => {
 		);
 	}
 
+	const values: Partial<typeof schema.qrCodes.$inferInsert> = {};
+	if (parsed.data.name) values.name = parsed.data.name;
+	if (parsed.data.medium) values.medium = parsed.data.medium;
+	if (parsed.data.location) values.location = parsed.data.location;
+	if (Object.keys(values).length === 0) {
+		return c.json({ error: 'No fields to update' }, 400);
+	}
+
 	const db = getDb(c.env.DB);
-	const result = await db
-		.update(schema.qrCodes)
-		.set({ location: parsed.data.location })
-		.where(eq(schema.qrCodes.id, qrId));
-	if (result.meta.changes === 0)
-		return c.json({ error: 'QR code not found' }, 404);
+	try {
+		const result = await db
+			.update(schema.qrCodes)
+			.set(values)
+			.where(eq(schema.qrCodes.id, qrId));
+		if (result.meta.changes === 0)
+			return c.json({ error: 'QR code not found' }, 404);
+	} catch (error) {
+		if (isUniqueConstraintError(error)) {
+			return c.json(
+				{ error: 'この媒体・場所の組み合わせは既に登録されています' },
+				409,
+			);
+		}
+		throw error;
+	}
 	return c.json({ message: 'QR code updated', qrId });
 });
 

@@ -8,5 +8,6 @@ JWT_SECRET=change-me-to-a-long-random-string
 # Password required to log in to the admin UI / API.
 ADMIN_PASSWORD=change-me
 
-# Passcode a person physically installing a QR code must enter to label its location.
-LOCATION_SETUP_PASSCODE=change-me-too
+# Set to "true" to turn on the CSV export endpoint locally. Not a secret —
+# production controls this via wrangler.jsonc's `vars` instead.
+CSV_EXPORT_ENABLED=false

@@ -20,6 +20,3 @@ These are deliberate simplifications documented for transparency, not oversights
 - **No login rate limiting.** `POST /auth/login` can be brute-forced; use a strong
   `ADMIN_PASSWORD` and consider adding rate limiting (e.g. Cloudflare Turnstile or a KV-backed
   counter) if you expose this publicly.
-- **The location-setup passcode (`LOCATION_SETUP_PASSCODE`) is a single shared secret** with no
-  per-QR-code distinction, by design (it's meant for whoever is physically installing a QR code,
-  not an authenticated user).

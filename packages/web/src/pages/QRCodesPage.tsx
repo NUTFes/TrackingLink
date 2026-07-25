@@ -4,6 +4,7 @@ import {
 	ChevronRight,
 	Loader,
 	MapPin,
+	Pencil,
 	Plus,
 	QrCode,
 	Trash2,
@@ -28,6 +29,8 @@ import { useTranslation } from '../lib/i18n';
 interface QRCode {
 	id: string;
 	projectId: string;
+	name: string;
+	medium: string;
 	location: string;
 	createdAt: string;
 	creatorId?: string | null;
@@ -92,7 +95,7 @@ function QRDialog({ qr, onClose }: { qr: QRCode; onClose: () => void }) {
 					<div>
 						<h3 className="font-semibold">{t('qrCodes.dialogTitle')}</h3>
 						<p className="text-xs text-muted-foreground mt-0.5">
-							{qr.location}
+							{qr.name} · {qr.medium} · {qr.location}
 						</p>
 					</div>
 					<button
@@ -220,22 +223,31 @@ function Pagination({
 function QRCard({
 	qr,
 	onView,
+	onEdit,
 	onDelete,
+	canEdit,
 	canDeleteThis,
 }: {
 	qr: QRCode;
 	onView: () => void;
+	onEdit: () => void;
 	onDelete: () => void;
+	canEdit: boolean;
 	canDeleteThis: boolean;
 }) {
 	const { t } = useTranslation();
 	return (
 		<div className="border-b last:border-0 px-4 py-4 hover:bg-muted/30 transition-colors">
 			<div className="flex items-start justify-between gap-2 mb-3">
-				<span className="flex items-center gap-1.5 text-sm font-medium leading-snug">
-					<MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0 mt-0.5" />
-					{qr.location}
-				</span>
+				<div className="min-w-0">
+					<p className="text-sm font-medium leading-snug truncate">{qr.name}</p>
+					<p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+						<span>{qr.medium}</span>
+						<span aria-hidden="true">·</span>
+						<MapPin className="h-3 w-3 shrink-0" />
+						<span className="truncate">{qr.location}</span>
+					</p>
+				</div>
 				<span className="text-xs text-muted-foreground shrink-0">
 					{qr.createdAt ? new Date(qr.createdAt).toLocaleDateString() : '-'}
 				</span>
@@ -249,6 +261,16 @@ function QRCard({
 					<QrCode className="h-3.5 w-3.5" />
 					{t('qrCodes.showButton')}
 				</button>
+				{canEdit && (
+					<button
+						type="button"
+						onClick={onEdit}
+						className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+					>
+						<Pencil className="h-3.5 w-3.5" />
+						{t('common.edit')}
+					</button>
+				)}
 				{canDeleteThis && (
 					<button
 						type="button"
@@ -283,10 +305,14 @@ function QRCodesContent() {
 	const [qrCodes, setQrCodes] = useState<QRCode[]>([]);
 	const [total, setTotal] = useState(0);
 	const [isLoading, setIsLoading] = useState(false);
-	const [isCreating, setIsCreating] = useState(false);
+	const [isSaving, setIsSaving] = useState(false);
 	const [error, setError] = useState<string | null>(null);
+	const [newName, setNewName] = useState('');
+	const [newMedium, setNewMedium] = useState('');
 	const [newLocation, setNewLocation] = useState('');
-	const [showCreateForm, setShowCreateForm] = useState(false);
+	const [showForm, setShowForm] = useState(false);
+	const [formError, setFormError] = useState<string | null>(null);
+	const [editingQR, setEditingQR] = useState<QRCode | null>(null);
 	const [currentPage, setCurrentPage] = useState(1);
 	const [dialogQR, setDialogQR] = useState<QRCode | null>(null);
 
@@ -323,31 +349,78 @@ function QRCodesContent() {
 		fetchData(currentPage);
 	}, [fetchData, currentPage]);
 
-	const handleCreate = async (e: FormEvent) => {
+	const resetForm = () => {
+		setNewName('');
+		setNewMedium('');
+		setNewLocation('');
+		setEditingQR(null);
+		setShowForm(false);
+		setFormError(null);
+	};
+
+	const openCreateForm = () => {
+		if (showForm && !editingQR) {
+			setShowForm(false);
+			return;
+		}
+		setNewName('');
+		setNewMedium('');
+		setNewLocation('');
+		setEditingQR(null);
+		setShowForm(true);
+		setFormError(null);
+	};
+
+	const openEditForm = (qr: QRCode) => {
+		setNewName(qr.name);
+		setNewMedium(qr.medium);
+		setNewLocation(qr.location);
+		setEditingQR(qr);
+		setShowForm(true);
+		setFormError(null);
+	};
+
+	const handleSubmit = async (e: FormEvent) => {
 		e.preventDefault();
 		if (!projectId) return;
-		setIsCreating(true);
+		const name = newName.trim();
+		const medium = newMedium.trim();
+		const location = newLocation.trim();
+		if (!name || !medium || !location) return;
+
+		setIsSaving(true);
+		setFormError(null);
 		try {
-			const res = await authFetch(
-				`${TRACKING_LINK_API_URL}/projects/${projectId}/qrcodes`,
-				{
-					method: 'POST',
-					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ location: newLocation.trim() || 'unset' }),
-				},
-			);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			setNewLocation('');
-			setShowCreateForm(false);
-			if (currentPage === 1) {
-				await fetchData(1);
+			const url = editingQR
+				? `${TRACKING_LINK_API_URL}/projects/qrcodes/${editingQR.id}`
+				: `${TRACKING_LINK_API_URL}/projects/${projectId}/qrcodes`;
+			const res = await authFetch(url, {
+				method: editingQR ? 'PUT' : 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ name, medium, location }),
+			});
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({}));
+				throw new Error(
+					(data as { error?: string }).error ?? `HTTP ${res.status}`,
+				);
+			}
+			resetForm();
+			if (editingQR || currentPage === 1) {
+				await fetchData(currentPage);
 			} else {
 				setCurrentPage(1);
 			}
 		} catch (e) {
-			setError(e instanceof Error ? e.message : t('qrCodes.createFailed'));
+			setFormError(
+				e instanceof Error
+					? e.message
+					: editingQR
+						? t('qrCodes.editFailed')
+						: t('qrCodes.createFailed'),
+			);
 		} finally {
-			setIsCreating(false);
+			setIsSaving(false);
 		}
 	};
 
@@ -404,7 +477,7 @@ function QRCodesContent() {
 				{canEdit && (
 					<button
 						type="button"
-						onClick={() => setShowCreateForm((v) => !v)}
+						onClick={openCreateForm}
 						className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 md:px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
 					>
 						<Plus className="h-4 w-4" />
@@ -419,31 +492,78 @@ function QRCodesContent() {
 				</div>
 			)}
 
-			{canEdit && showCreateForm && (
+			{canEdit && showForm && (
 				<div className="mb-6 rounded-lg border bg-card p-4 md:p-5 shadow-sm">
-					<h2 className="mb-4 font-semibold">{t('qrCodes.newFormTitle')}</h2>
-					<form onSubmit={handleCreate} className="flex items-end gap-3">
-						<div className="flex-1 space-y-1.5">
-							<label htmlFor="location" className="block text-sm font-medium">
-								{t('qrCodes.locationLabel')}
-							</label>
-							<input
-								id="location"
-								type="text"
-								value={newLocation}
-								onChange={(e) => setNewLocation(e.target.value)}
-								placeholder={t('qrCodes.locationPlaceholder')}
-								className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-							/>
+					<h2 className="mb-4 font-semibold">
+						{editingQR ? t('qrCodes.editFormTitle') : t('qrCodes.newFormTitle')}
+					</h2>
+					<form onSubmit={handleSubmit} className="space-y-3">
+						<div className="grid gap-3 sm:grid-cols-3">
+							<div className="space-y-1.5">
+								<label htmlFor="qrName" className="block text-sm font-medium">
+									{t('qrCodes.nameLabel')}
+								</label>
+								<input
+									id="qrName"
+									type="text"
+									value={newName}
+									onChange={(e) => setNewName(e.target.value)}
+									placeholder={t('qrCodes.namePlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<label htmlFor="qrMedium" className="block text-sm font-medium">
+									{t('qrCodes.mediumLabel')}
+								</label>
+								<input
+									id="qrMedium"
+									type="text"
+									value={newMedium}
+									onChange={(e) => setNewMedium(e.target.value)}
+									placeholder={t('qrCodes.mediumPlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<label htmlFor="location" className="block text-sm font-medium">
+									{t('qrCodes.locationLabel')}
+								</label>
+								<input
+									id="location"
+									type="text"
+									value={newLocation}
+									onChange={(e) => setNewLocation(e.target.value)}
+									placeholder={t('qrCodes.locationPlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
 						</div>
-						<button
-							type="submit"
-							disabled={isCreating}
-							className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-						>
-							{isCreating && <Loader className="h-4 w-4 animate-spin" />}
-							{t('common.add')}
-						</button>
+						{formError && (
+							<p className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+								{formError}
+							</p>
+						)}
+						<div className="flex items-center gap-3">
+							<button
+								type="submit"
+								disabled={isSaving}
+								className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+							>
+								{isSaving && <Loader className="h-4 w-4 animate-spin" />}
+								{editingQR ? t('common.save') : t('common.add')}
+							</button>
+							<button
+								type="button"
+								onClick={resetForm}
+								className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted/50 transition-colors"
+							>
+								{t('common.cancel')}
+							</button>
+						</div>
 					</form>
 				</div>
 			)}
@@ -475,7 +595,9 @@ function QRCodesContent() {
 									key={qr.id}
 									qr={qr}
 									onView={() => setDialogQR(qr)}
+									onEdit={() => openEditForm(qr)}
 									onDelete={() => handleDelete(qr.id)}
+									canEdit={canEdit}
 									canDeleteThis={canDeleteQR(qr)}
 								/>
 							))}
@@ -487,7 +609,10 @@ function QRCodesContent() {
 								<thead>
 									<tr className="border-b bg-muted/50">
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											{t('qrCodes.qrIdHeader')}
+											{t('common.name')}
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											{t('qrCodes.mediumLabel')}
 										</th>
 										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
 											{t('common.location')}
@@ -506,8 +631,9 @@ function QRCodesContent() {
 											key={qr.id}
 											className="border-b last:border-0 hover:bg-muted/30 transition-colors"
 										>
-											<td className="px-5 py-3 font-mono text-xs">
-												{qr.id.slice(0, 12)}…
+											<td className="px-5 py-3">{qr.name}</td>
+											<td className="px-5 py-3 text-muted-foreground">
+												{qr.medium}
 											</td>
 											<td className="px-5 py-3">
 												<span className="flex items-center gap-1.5">
@@ -530,6 +656,16 @@ function QRCodesContent() {
 														<QrCode className="h-3 w-3" />
 														{t('common.show')}
 													</button>
+													{canEdit && (
+														<button
+															type="button"
+															onClick={() => openEditForm(qr)}
+															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
+														>
+															<Pencil className="h-3 w-3" />
+															{t('common.edit')}
+														</button>
+													)}
 													{canDeleteQR(qr) && (
 														<button
 															type="button"
