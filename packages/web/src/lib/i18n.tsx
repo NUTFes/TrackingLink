@@ -44,6 +44,7 @@ const en: Dictionary = {
 	'common.deleting': 'Deleting…',
 	'common.saving': 'Saving…',
 	'common.menu': 'Menu',
+	'common.discardChanges': 'Discard your unsaved changes?',
 
 	// Errors, keyed off the API's error codes so wording lives on the client.
 	'error.network':
@@ -82,12 +83,15 @@ const en: Dictionary = {
 	'nav.projects': 'Projects',
 	'nav.newProject': 'New project',
 	'nav.logOut': 'Log out',
+	'nav.language': 'Language',
 
 	'permission.noAccessTitle': "You don't have access to this page.",
 	'permission.noAccessDesc':
 		'Contact an administrator if you believe this is a mistake.',
 
 	'pagination.range': '{start}–{end} of {total}',
+	'pagination.previous': 'Previous page',
+	'pagination.next': 'Next page',
 
 	'projects.heading': 'TrackingLink',
 	'projects.cardTitle': 'Projects',
@@ -96,9 +100,16 @@ const en: Dictionary = {
 	'projects.csvDownloadLink': 'Download CSV',
 	'projects.editFormTitle': 'Edit project',
 	'projects.editFailed': 'Failed to update the project',
-	'projects.deleteConfirm':
-		'Delete this project? All of its QR codes will be deleted too.',
+	'projects.created': 'Project created',
+	'projects.updated': 'Project updated',
+	'projects.deleted': 'Project deleted',
+	'projects.deleteTitle': 'Delete project',
+	'projects.deleteBody':
+		'Delete “{name}”?\n\nIts QR codes and all of their scan history will be deleted too. This cannot be undone.',
 	'projects.deleteFailed': 'Failed to delete the project',
+	'projects.emptyCta': 'Create your first project',
+	'projects.destinationUrlPropagation':
+		'A changed destination URL can take up to a minute to take effect for everyone.',
 
 	'createProject.heading': 'New project',
 	'createProject.subtitle': 'Create a new TrackingLink project',
@@ -123,13 +134,22 @@ const en: Dictionary = {
 	'qrCodes.cardTitle': 'QR codes',
 	'qrCodes.empty': 'No QR codes yet.',
 	'qrCodes.showButton': 'Show QR',
-	'qrCodes.deleteConfirm':
-		'Delete this QR code? Its scan history will be deleted too.',
+	'qrCodes.editFormTitleNamed': 'Edit “{name}”',
+	'qrCodes.nameHint':
+		'One QR code per item, so this has to be unique within the project.',
+	'qrCodes.created': 'QR code created',
+	'qrCodes.updated': 'QR code updated',
+	'qrCodes.deleted': 'QR code deleted',
+	'qrCodes.deleteTitle': 'Delete QR code',
+	'qrCodes.deleteBody':
+		'Delete “{name}”?\n\nIts scan history will be deleted too, and anything already printed with this code will stop working. This cannot be undone.',
 	'qrCodes.createFailed': 'Failed to create the QR code',
 	'qrCodes.editFailed': 'Failed to update the QR code',
 	'qrCodes.deleteFailed': 'Failed to delete',
 	'qrCodes.qrIdHeader': 'QR ID',
 	'qrCodes.dialogTitle': 'QR code',
+	'qrCodes.imageAlt': 'QR code for {name}',
+	'qrCodes.scanUrlLabel': 'This code links to',
 	'qrCodes.generateFailed': 'Failed to generate the QR code',
 	'qrCodes.downloadButton': 'Download PNG',
 
@@ -166,6 +186,7 @@ const ja: Dictionary = {
 	'common.deleting': '削除中…',
 	'common.saving': '保存中…',
 	'common.menu': 'メニュー',
+	'common.discardChanges': '保存していない変更を破棄しますか？',
 
 	// Errors, keyed off the API's error codes so wording lives on the client.
 	'error.network':
@@ -206,12 +227,15 @@ const ja: Dictionary = {
 	'nav.projects': 'プロジェクト',
 	'nav.newProject': 'プロジェクト作成',
 	'nav.logOut': 'ログアウト',
+	'nav.language': '言語',
 
 	'permission.noAccessTitle': 'このページへのアクセス権限がありません。',
 	'permission.noAccessDesc':
 		'心当たりがない場合は管理者にお問い合わせください。',
 
 	'pagination.range': '{start}〜{end} 件（全 {total} 件）',
+	'pagination.previous': '前のページ',
+	'pagination.next': '次のページ',
 
 	'projects.heading': 'TrackingLink',
 	'projects.cardTitle': 'プロジェクト一覧',
@@ -220,9 +244,16 @@ const ja: Dictionary = {
 	'projects.csvDownloadLink': 'CSVダウンロード',
 	'projects.editFormTitle': 'プロジェクトを編集',
 	'projects.editFailed': 'プロジェクトの更新に失敗しました',
-	'projects.deleteConfirm':
-		'このプロジェクトを削除しますか？QRコードもすべて削除されます。',
+	'projects.created': 'プロジェクトを作成しました',
+	'projects.updated': 'プロジェクトを更新しました',
+	'projects.deleted': 'プロジェクトを削除しました',
+	'projects.deleteTitle': 'プロジェクトを削除',
+	'projects.deleteBody':
+		'「{name}」を削除しますか？\n\nこのプロジェクトのQRコードと、そのアクセスログもすべて削除されます。この操作は取り消せません。',
 	'projects.deleteFailed': 'プロジェクトの削除に失敗しました',
+	'projects.emptyCta': '最初のプロジェクトを作成',
+	'projects.destinationUrlPropagation':
+		'転送先URLの変更は、全員に反映されるまで最大1分かかることがあります。',
 
 	'createProject.heading': 'プロジェクト作成',
 	'createProject.subtitle': '新しいTrackingLinkプロジェクトを作成します。',
@@ -247,13 +278,22 @@ const ja: Dictionary = {
 	'qrCodes.cardTitle': 'QRコード一覧',
 	'qrCodes.empty': 'QRコードがありません。',
 	'qrCodes.showButton': 'QR表示',
-	'qrCodes.deleteConfirm':
-		'このQRコードを削除しますか？アクセスログも削除されます。',
+	'qrCodes.editFormTitleNamed': '「{name}」を編集',
+	'qrCodes.nameHint':
+		'物ごとに1つのQRコードを発行するため、プロジェクト内で重複しない名前にしてください。',
+	'qrCodes.created': 'QRコードを作成しました',
+	'qrCodes.updated': 'QRコードを更新しました',
+	'qrCodes.deleted': 'QRコードを削除しました',
+	'qrCodes.deleteTitle': 'QRコードを削除',
+	'qrCodes.deleteBody':
+		'「{name}」を削除しますか？\n\nアクセスログも削除され、このコードで既に印刷したものは読み取れなくなります。この操作は取り消せません。',
 	'qrCodes.createFailed': 'QRコードの作成に失敗しました',
 	'qrCodes.editFailed': 'QRコードの更新に失敗しました',
 	'qrCodes.deleteFailed': '削除に失敗しました',
 	'qrCodes.qrIdHeader': 'QR ID',
 	'qrCodes.dialogTitle': 'QRコード',
+	'qrCodes.imageAlt': '「{name}」のQRコード',
+	'qrCodes.scanUrlLabel': 'このコードの転送先',
 	'qrCodes.generateFailed': 'QRコードの生成に失敗しました',
 	'qrCodes.downloadButton': 'PNGをダウンロード',
 
