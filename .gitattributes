@@ -1,0 +1,6 @@
+# Normalize to LF in the repository and check out LF in the working tree, on
+# every platform. Without this, a Windows clone with core.autocrlf=true gets
+# CRLF working files, and `pnpm lint` fails on every file with a wall of
+# line-ending diffs — while CI (ubuntu, LF) passes, so the failure looks like a
+# local mystery. Biome formats to LF, so the working tree has to be LF too.
+* text=auto eol=lf
