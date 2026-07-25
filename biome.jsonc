@@ -1,5 +1,14 @@
 {
 	"$schema": "https://biomejs.dev/schemas/1.9.4/schema.json",
+	// Respect .gitignore so that locally-generated, untracked files are not
+	// linted. Without this, `pnpm lint` fails on machine-specific files such as
+	// .claude/settings.local.json, which CI never sees — so the failure only ever
+	// happens on a developer's machine.
+	"vcs": {
+		"enabled": true,
+		"clientKind": "git",
+		"useIgnoreFile": true
+	},
 	"files": {
 		"ignore": [
 			"**/dist",
