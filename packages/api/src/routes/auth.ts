@@ -1,10 +1,13 @@
 import { Hono } from 'hono';
 import * as z from 'zod';
 import { type HonoEnv, authMiddleware, signLocalSession } from '../auth';
+import { ErrorCodes, fail } from '../errors';
 import { ALL_PERMISSIONS } from '../permissions';
 
 const loginBodySchema = z.object({
-	password: z.string().min(1),
+	// Capped so an unauthenticated caller cannot make the Worker hash/compare an
+	// arbitrarily large body.
+	password: z.string().min(1).max(200),
 });
 
 const authApp = new Hono<HonoEnv>();
@@ -22,11 +25,13 @@ authApp.post('/login', async (c) => {
 	const body = await c.req.json().catch(() => null);
 	const parsed = loginBodySchema.safeParse(body);
 	if (!parsed.success) {
-		return c.json({ error: 'password is required' }, 400);
+		return fail(c, 400, ErrorCodes.PASSWORD_REQUIRED, { fields: ['password'] });
 	}
 
+	// A dedicated code, distinct from UNAUTHORIZED: the web app must not treat a
+	// wrong password on the login form as "your session expired".
 	if (parsed.data.password !== c.env.ADMIN_PASSWORD) {
-		return c.json({ error: 'Invalid password' }, 401);
+		return fail(c, 401, ErrorCodes.INVALID_PASSWORD, { fields: ['password'] });
 	}
 
 	const token = await signLocalSession(
