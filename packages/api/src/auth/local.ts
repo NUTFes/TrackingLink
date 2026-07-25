@@ -1,7 +1,10 @@
 import { SignJWT, jwtVerify } from 'jose';
 import type { AuthUser, Verifier } from './types';
 
-const SESSION_TTL_SECONDS = 60 * 60 * 24; // 24h
+// One event day. The token is an all-permissions bearer credential living in
+// localStorage, so a shorter life is the cheapest reduction of its blast radius;
+// 24h meant a token stolen on day one still worked on day two.
+const SESSION_TTL_SECONDS = 60 * 60 * 8; // 8h
 
 /** Issues a session token for the built-in single-admin-password login (see `../routes/auth.ts`). */
 export async function signLocalSession(

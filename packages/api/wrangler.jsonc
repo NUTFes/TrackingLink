@@ -13,6 +13,20 @@
 	// Custom domain / route the redirect endpoint should live on.
 	// Leave this out entirely to use the workers.dev subdomain instead.
 	// "routes": [{ "pattern": "links.example.com", "custom_domain": true }],
+	// Rate limiter for POST /auth/login. `unsafe` bindings are excluded from
+	// `wrangler types`, so the interface is declared by hand in src/auth/types.ts.
+	// The limiter is per-colo, not global — plenty for an admin panel.
+	"unsafe": {
+		"bindings": [
+			{
+				"name": "LOGIN_LIMITER",
+				"type": "ratelimit",
+				"namespace_id": "1001",
+				// `period` only accepts 10 or 60.
+				"simple": { "limit": 10, "period": 60 }
+			}
+		]
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",

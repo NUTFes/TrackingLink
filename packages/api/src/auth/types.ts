@@ -26,6 +26,22 @@ export interface Bindings {
 	 * dropped during an event.
 	 */
 	LOG_WRITE_MODE?: 'async' | 'sync';
+	/**
+	 * Rate limiter guarding POST /auth/login.
+	 *
+	 * Declared by hand because `unsafe` bindings are excluded from
+	 * `wrangler types` generation. Optional so that a deployment without the
+	 * binding still serves logins rather than locking everyone out — the handler
+	 * logs loudly when it is missing instead.
+	 */
+	LOGIN_LIMITER?: RateLimiter;
+	/** Build identifier surfaced by /healthz, for confirming what is deployed. */
+	GIT_SHA?: string;
+}
+
+/** The shape of a Workers Rate Limiting binding (`type: "ratelimit"`). */
+export interface RateLimiter {
+	limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
 export interface AuthUser {
