@@ -68,6 +68,8 @@ const en: Dictionary = {
 	'validation.required': 'This field is required.',
 	'validation.tooLong': 'Please use {max} characters or fewer.',
 	'validation.url': 'Enter a URL starting with http:// or https://',
+	'validation.fallbackKey':
+		'Use lowercase letters, digits and hyphens only, starting with a letter or digit.',
 
 	'login.sessionExpired': 'Your session expired. Please sign in again.',
 	'login.retryAfterNetwork':
@@ -110,6 +112,10 @@ const en: Dictionary = {
 	'projects.emptyCta': 'Create your first project',
 	'projects.destinationUrlPropagation':
 		'A changed destination URL can take up to a minute to take effect for everyone.',
+	'projects.fallbackKeyLabel': 'Fallback keyword',
+	'projects.fallbackKeyPlaceholder': 'e.g. instagram',
+	'projects.fallbackKeyHint':
+		'Baked into this project’s QR codes and used to pick a destination if the database is unreachable. Suggested from the destination URL. Changing it later does not update QR codes that are already printed.',
 
 	'createProject.heading': 'New project',
 	'createProject.subtitle': 'Create a new TrackingLink project',
@@ -211,6 +217,8 @@ const ja: Dictionary = {
 	'validation.required': 'この項目は必須です。',
 	'validation.tooLong': '{max}文字以内で入力してください。',
 	'validation.url': 'http:// または https:// で始まるURLを入力してください。',
+	'validation.fallbackKey':
+		'半角の英小文字・数字・ハイフンのみ、先頭は英数字で入力してください。',
 
 	'login.sessionExpired':
 		'セッションの有効期限が切れました。再度ログインしてください。',
@@ -254,6 +262,10 @@ const ja: Dictionary = {
 	'projects.emptyCta': '最初のプロジェクトを作成',
 	'projects.destinationUrlPropagation':
 		'転送先URLの変更は、全員に反映されるまで最大1分かかることがあります。',
+	'projects.fallbackKeyLabel': 'フォールバック用キーワード',
+	'projects.fallbackKeyPlaceholder': '例：instagram',
+	'projects.fallbackKeyHint':
+		'このプロジェクトのQRコードに埋め込まれ、データベースに接続できないときの転送先を選ぶのに使われます。転送先URLから自動で提案されます。後から変更しても、既に印刷したQRコードには反映されません。',
 
 	'createProject.heading': 'プロジェクト作成',
 	'createProject.subtitle': '新しいTrackingLinkプロジェクトを作成します。',

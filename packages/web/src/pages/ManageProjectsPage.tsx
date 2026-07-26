@@ -8,7 +8,7 @@ import {
 	ScanLine,
 	Trash2,
 } from 'lucide-react';
-import { type FormEvent, useCallback, useState } from 'react';
+import { type FormEvent, useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
 import { ConfirmDialog } from '../components/ConfirmDialog';
@@ -18,13 +18,18 @@ import { PermissionGuard } from '../components/PermissionGuard';
 import { useToast } from '../components/ToastProvider';
 import { TRACKING_LINK_API_URL } from '../config';
 import { useApiErrorMessage } from '../hooks/useApiError';
-import { useFieldErrors, validateHttpUrl } from '../hooks/useFieldErrors';
+import {
+	useFieldErrors,
+	validateFallbackKey,
+	validateHttpUrl,
+} from '../hooks/useFieldErrors';
 import { useListQuery } from '../hooks/useListQuery';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
 import { ApiError, assertOk, authFetch } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { formatDateTime, slugForFilename } from '../lib/format';
 import { useTranslation } from '../lib/i18n';
+import { deriveFallbackKey } from '../lib/qr';
 import {
 	btnPrimary,
 	btnRow,
@@ -40,6 +45,7 @@ interface Project {
 	projectId: string;
 	name: string;
 	destinationUrl: string;
+	fallbackKey: string;
 	createdAt: string;
 	adminUserId: string;
 	accessCount: number;
@@ -49,6 +55,7 @@ interface Project {
 const PAGE_SIZE = 10;
 const NAME_MAX = 200;
 const URL_MAX = 2048;
+const FALLBACK_KEY_MAX = 40;
 
 /**
  * One in-flight row action at a time.
@@ -162,6 +169,11 @@ function ManageProjectsContent() {
 	const [editing, setEditing] = useState<Project | null>(null);
 	const [editName, setEditName] = useState('');
 	const [editUrl, setEditUrl] = useState('');
+	const [editFallbackKey, setEditFallbackKey] = useState('');
+	// Stops the destination URL from overwriting a keyword the user chose by hand —
+	// the value ends up printed on posters, so a silent overwrite is worse than no
+	// suggestion at all.
+	const fallbackKeyTouched = useRef(false);
 	const [isSaving, setIsSaving] = useState(false);
 	const [confirmTarget, setConfirmTarget] = useState<Project | null>(null);
 	const {
@@ -173,19 +185,33 @@ function ManageProjectsContent() {
 
 	const isDirty =
 		editing !== null &&
-		(editName !== editing.name || editUrl !== editing.destinationUrl);
+		(editName !== editing.name ||
+			editUrl !== editing.destinationUrl ||
+			editFallbackKey !== editing.fallbackKey);
 
 	const openEdit = (project: Project) => {
 		setEditing(project);
 		setEditName(project.name);
 		setEditUrl(project.destinationUrl);
+		setEditFallbackKey(project.fallbackKey);
+		// An existing project already has a considered value (even a blank one), so
+		// the URL must not start rewriting it just because the form opened.
+		fallbackKeyTouched.current = true;
 		clearErrors();
+	};
+
+	const onEditUrlChange = (value: string) => {
+		setEditUrl(value);
+		if (!fallbackKeyTouched.current)
+			setEditFallbackKey(deriveFallbackKey(value));
 	};
 
 	const closeEdit = () => {
 		setEditing(null);
 		setEditName('');
 		setEditUrl('');
+		setEditFallbackKey('');
+		fallbackKeyTouched.current = false;
 		clearErrors();
 	};
 
@@ -211,6 +237,12 @@ function ManageProjectsContent() {
 				maxLength: URL_MAX,
 				validate: validateHttpUrl,
 			},
+			fallbackKey: {
+				id: 'editProjectFallbackKey',
+				value: editFallbackKey,
+				maxLength: FALLBACK_KEY_MAX,
+				validate: validateFallbackKey,
+			},
 		});
 		if (!ok) return;
 
@@ -224,6 +256,7 @@ function ManageProjectsContent() {
 					body: JSON.stringify({
 						projectName: editName.trim(),
 						destinationUrl: editUrl.trim(),
+						fallbackKey: editFallbackKey.trim(),
 					}),
 				},
 			);
@@ -493,7 +526,7 @@ function ManageProjectsContent() {
 							type="text"
 							inputMode="url"
 							value={editUrl}
-							onChange={(e) => setEditUrl(e.target.value)}
+							onChange={(e) => onEditUrlChange(e.target.value)}
 							onBlur={() => setEditUrl((v) => v.trim())}
 							maxLength={URL_MAX}
 							disabled={isSaving}
@@ -508,6 +541,46 @@ function ManageProjectsContent() {
 								{errors.destinationUrl}
 							</p>
 						) : null}
+					</div>
+					<div className="space-y-1.5">
+						<label htmlFor="editProjectFallbackKey" className={labelBase}>
+							{t('projects.fallbackKeyLabel')}{' '}
+							<span className="font-normal text-muted-foreground">
+								({t('common.optional')})
+							</span>
+						</label>
+						<input
+							id="editProjectFallbackKey"
+							type="text"
+							value={editFallbackKey}
+							onChange={(e) => {
+								fallbackKeyTouched.current = true;
+								setEditFallbackKey(e.target.value);
+							}}
+							onBlur={() => setEditFallbackKey((v) => v.trim())}
+							placeholder={t('projects.fallbackKeyPlaceholder')}
+							maxLength={FALLBACK_KEY_MAX}
+							disabled={isSaving}
+							aria-invalid={errors.fallbackKey ? true : undefined}
+							aria-describedby={
+								errors.fallbackKey
+									? 'editProjectFallbackKey-error'
+									: 'editProjectFallbackKey-hint'
+							}
+							className={inputBase}
+						/>
+						{errors.fallbackKey ? (
+							<p id="editProjectFallbackKey-error" className={fieldErrorText}>
+								{errors.fallbackKey}
+							</p>
+						) : (
+							<p
+								id="editProjectFallbackKey-hint"
+								className="text-xs text-muted-foreground"
+							>
+								{t('projects.fallbackKeyHint')}
+							</p>
+						)}
 					</div>
 					<p className="text-xs text-muted-foreground">
 						{t('projects.destinationUrlPropagation')}

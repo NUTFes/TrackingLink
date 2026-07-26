@@ -71,6 +71,17 @@ export function useFieldErrors() {
 	return { errors, validate, clear, setFromFields };
 }
 
+/**
+ * Mirrors the API's fallback-key rule (`^[a-z0-9][a-z0-9-]*$`).
+ *
+ * ASCII-only is not arbitrary: the keyword is percent-encoded into the printed QR
+ * payload, and a Japanese character costs 9 bytes there — enough to grow the
+ * symbol from 57x57 to 61x61 modules.
+ */
+export function validateFallbackKey(value: string): string | null {
+	return /^[a-z0-9][a-z0-9-]*$/.test(value) ? null : 'validation.fallbackKey';
+}
+
 /** Shared http(s) check, mirroring the API's protocol allow-list. */
 export function validateHttpUrl(value: string): string | null {
 	try {

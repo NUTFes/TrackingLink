@@ -30,7 +30,12 @@ import { ApiError, assertOk, authFetch } from '../lib/api';
 import { downloadBlob } from '../lib/download';
 import { formatDateTime, slugForFilename } from '../lib/format';
 import { useTranslation } from '../lib/i18n';
-import { qrPngBlob, qrPreviewDataUrl, qrTargetUrl } from '../lib/qr';
+import {
+	deriveFallbackKey,
+	qrPngBlob,
+	qrPreviewDataUrl,
+	qrTargetUrl,
+} from '../lib/qr';
 import {
 	btnPrimary,
 	btnRow,
@@ -55,6 +60,8 @@ interface QRCodeRecord {
 interface Project {
 	name: string;
 	projectId: string;
+	destinationUrl: string;
+	fallbackKey: string;
 }
 
 const PAGE_SIZE = 10;
@@ -93,8 +100,14 @@ function useQRDataUrl(text: string | null) {
  * edit or delete the right one. `alt=""` because the name is right next to it —
  * announcing the image again would just be noise.
  */
-function QRThumbnail({ qrId }: { qrId: string }) {
-	const url = useMemo(() => qrTargetUrl(qrId), [qrId]);
+function QRThumbnail({
+	qrId,
+	fallbackKey,
+}: { qrId: string; fallbackKey: string }) {
+	const url = useMemo(
+		() => qrTargetUrl(qrId, fallbackKey),
+		[qrId, fallbackKey],
+	);
 	const { dataUrl } = useQRDataUrl(url);
 	return (
 		<div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded border bg-white">
@@ -112,14 +125,19 @@ function QRThumbnail({ qrId }: { qrId: string }) {
 
 function QRDialog({
 	qr,
+	fallbackKey,
 	onClose,
 }: {
 	qr: QRCodeRecord;
+	fallbackKey: string;
 	onClose: () => void;
 }) {
 	const { t } = useTranslation();
 	const toast = useToast();
-	const url = useMemo(() => qrTargetUrl(qr.id), [qr.id]);
+	const url = useMemo(
+		() => qrTargetUrl(qr.id, fallbackKey),
+		[qr.id, fallbackKey],
+	);
 	const { dataUrl, failed } = useQRDataUrl(url);
 	const [isDownloading, setIsDownloading] = useState(false);
 
@@ -245,6 +263,13 @@ function QRCodesContent() {
 	const list = useListQuery<QRCodeRecord>(buildUrl, PAGE_SIZE);
 
 	const [project, setProject] = useState<Project | null>(null);
+
+	// What actually gets baked into the QR codes on this page. Falling back to a
+	// value derived from the destination host is what lets projects created before
+	// fallback_key existed carry a usable keyword with no data migration.
+	const effectiveFallbackKey = project
+		? project.fallbackKey || deriveFallbackKey(project.destinationUrl)
+		: '';
 	const [formOpen, setFormOpen] = useState(false);
 	const [editing, setEditing] = useState<QRCodeRecord | null>(null);
 	const [name, setName] = useState('');
@@ -480,7 +505,10 @@ function QRCodesContent() {
 								className="p-4 transition-colors hover:bg-muted/30"
 							>
 								<div className="flex items-start gap-3">
-									<QRThumbnail qrId={qr.id} />
+									<QRThumbnail
+										qrId={qr.id}
+										fallbackKey={effectiveFallbackKey}
+									/>
 									<div className="min-w-0 flex-1">
 										<p className="break-words text-sm font-medium leading-snug">
 											{qr.name}
@@ -697,7 +725,11 @@ function QRCodesContent() {
 			/>
 
 			{dialogQR ? (
-				<QRDialog qr={dialogQR} onClose={() => setDialogQR(null)} />
+				<QRDialog
+					qr={dialogQR}
+					fallbackKey={effectiveFallbackKey}
+					onClose={() => setDialogQR(null)}
+				/>
 			) : null}
 		</div>
 	);

@@ -18,8 +18,7 @@
 		"typecheck": "pnpm -r run typecheck",
 		"test": "pnpm -r run test",
 		"lint": "biome check .",
-		"lint:fix": "biome check --write .",
-		"test": "pnpm -r run test"
+		"lint:fix": "biome check --write ."
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^1.9.4",

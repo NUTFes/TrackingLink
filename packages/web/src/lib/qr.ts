@@ -9,14 +9,60 @@ import { TRACKING_LINK_API_URL } from '../config';
 const FWD_BASE_URL = import.meta.env.VITE_FWD_BASE_URL ?? TRACKING_LINK_API_URL;
 
 /**
+ * Longest fallback keyword accepted. Mirrors FALLBACK_KEY_MAX in the API's
+ * projects route and the Projects.fallback_key column.
+ */
+const FALLBACK_KEY_MAX = 40;
+
+/**
+ * Suggests a fallback keyword from a destination URL's host.
+ *
+ * `https://www.instagram.com/nutfes/` → `instagram`. Strips a leading `www.` and
+ * takes the first label, which gives a sensible answer for `nutfes.net`,
+ * `www.nutfes.ac.jp` and `example.co.jp` alike without needing a public-suffix
+ * list.
+ *
+ * Used in two places: to prefill the field when someone types a destination URL,
+ * and — more importantly — as the effective keyword for projects whose
+ * `fallbackKey` is still blank. That second use is why no data migration was
+ * needed: QR codes for projects created before the column existed still carry a
+ * usable keyword.
+ *
+ * Returns '' rather than throwing for anything unparseable; the caller then just
+ * omits `&p=` and the scan falls through to the site-wide fallback.
+ */
+export function deriveFallbackKey(destinationUrl: string): string {
+	let host: string;
+	try {
+		host = new URL(destinationUrl).hostname;
+	} catch {
+		return '';
+	}
+
+	const label = host.replace(/^www\./i, '').split('.')[0] ?? '';
+	return label
+		.toLowerCase()
+		.replace(/[^a-z0-9-]/g, '')
+		.replace(/^-+/, '')
+		.slice(0, FALLBACK_KEY_MAX);
+}
+
+/**
  * The URL baked into a printed QR code.
+ *
+ * `&p=<fallbackKey>` is what lets a scan still reach somewhere sensible when the
+ * Worker cannot read D1 — see packages/api/src/fallback.ts for why this is a
+ * keyword rather than the destination URL itself.
  *
  * Extracted from the dialog because it is the one string that, if wrong, produces
  * posters that have to be reprinted — and because a future bulk-print view needs
  * exactly this and nothing else from the dialog.
  */
-export function qrTargetUrl(qrId: string): string {
-	return `${FWD_BASE_URL}/?id=${qrId}`;
+export function qrTargetUrl(qrId: string, fallbackKey = ''): string {
+	const base = `${FWD_BASE_URL}/?id=${qrId}`;
+	// Omitted rather than sent empty: `&p=` with no value is noise in the payload
+	// and the Worker treats a missing key and a blank one identically.
+	return fallbackKey ? `${base}&p=${encodeURIComponent(fallbackKey)}` : base;
 }
 
 /** On-screen preview. */

@@ -1,14 +1,19 @@
 import { ArrowLeft, Loader2 } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { PermissionGuard } from '../components/PermissionGuard';
 import { useToast } from '../components/ToastProvider';
 import { TRACKING_LINK_API_URL } from '../config';
 import { useApiErrorMessage } from '../hooks/useApiError';
-import { useFieldErrors, validateHttpUrl } from '../hooks/useFieldErrors';
+import {
+	useFieldErrors,
+	validateFallbackKey,
+	validateHttpUrl,
+} from '../hooks/useFieldErrors';
 import { Permissions } from '../hooks/useStaffAuth';
 import { ApiError, assertOk, authFetch } from '../lib/api';
 import { useTranslation } from '../lib/i18n';
+import { deriveFallbackKey } from '../lib/qr';
 import {
 	btnPrimary,
 	btnSecondary,
@@ -19,6 +24,7 @@ import {
 
 const NAME_MAX = 200;
 const URL_MAX = 2048;
+const FALLBACK_KEY_MAX = 40;
 
 function CreateProjectForm() {
 	const { t } = useTranslation();
@@ -28,7 +34,18 @@ function CreateProjectForm() {
 	const { errors, validate, setFromFields } = useFieldErrors();
 	const [projectName, setProjectName] = useState('');
 	const [destinationUrl, setDestinationUrl] = useState('');
+	const [fallbackKey, setFallbackKey] = useState('');
 	const [isSubmitting, setIsSubmitting] = useState(false);
+
+	// Once the field has been edited by hand, the destination URL stops driving it.
+	// Silently overwriting a deliberate choice would be worse than not suggesting
+	// at all, because the value ends up printed on posters.
+	const fallbackKeyTouched = useRef(false);
+
+	const onDestinationUrlChange = (value: string) => {
+		setDestinationUrl(value);
+		if (!fallbackKeyTouched.current) setFallbackKey(deriveFallbackKey(value));
+	};
 
 	const handleSubmit = async (e: FormEvent) => {
 		e.preventDefault();
@@ -52,6 +69,12 @@ function CreateProjectForm() {
 				// is required.
 				validate: validateHttpUrl,
 			},
+			fallbackKey: {
+				id: 'fallbackKey',
+				value: fallbackKey,
+				maxLength: FALLBACK_KEY_MAX,
+				validate: validateFallbackKey,
+			},
 		});
 		if (!ok) return;
 
@@ -63,6 +86,7 @@ function CreateProjectForm() {
 				body: JSON.stringify({
 					projectName: projectName.trim(),
 					destinationUrl: destinationUrl.trim(),
+					fallbackKey: fallbackKey.trim(),
 				}),
 			});
 			await assertOk(res);
@@ -144,7 +168,7 @@ function CreateProjectForm() {
 							type="text"
 							inputMode="url"
 							value={destinationUrl}
-							onChange={(e) => setDestinationUrl(e.target.value)}
+							onChange={(e) => onDestinationUrlChange(e.target.value)}
 							onBlur={() => setDestinationUrl((v) => v.trim())}
 							placeholder={t('createProject.urlPlaceholder')}
 							maxLength={URL_MAX}
@@ -159,6 +183,44 @@ function CreateProjectForm() {
 								{errors.destinationUrl}
 							</p>
 						) : null}
+					</div>
+
+					<div className="space-y-1.5">
+						<label htmlFor="fallbackKey" className={labelBase}>
+							{t('projects.fallbackKeyLabel')}{' '}
+							<span className="font-normal text-muted-foreground">
+								({t('common.optional')})
+							</span>
+						</label>
+						<input
+							id="fallbackKey"
+							type="text"
+							value={fallbackKey}
+							onChange={(e) => {
+								fallbackKeyTouched.current = true;
+								setFallbackKey(e.target.value);
+							}}
+							onBlur={() => setFallbackKey((v) => v.trim())}
+							placeholder={t('projects.fallbackKeyPlaceholder')}
+							maxLength={FALLBACK_KEY_MAX}
+							aria-invalid={errors.fallbackKey ? true : undefined}
+							aria-describedby={
+								errors.fallbackKey ? 'fallbackKey-error' : 'fallbackKey-hint'
+							}
+							className={inputBase}
+						/>
+						{errors.fallbackKey ? (
+							<p id="fallbackKey-error" className={fieldErrorText}>
+								{errors.fallbackKey}
+							</p>
+						) : (
+							<p
+								id="fallbackKey-hint"
+								className="text-xs text-muted-foreground"
+							>
+								{t('projects.fallbackKeyHint')}
+							</p>
+						)}
 					</div>
 
 					<div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:gap-3">
