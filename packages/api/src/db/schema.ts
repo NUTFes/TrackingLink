@@ -10,6 +10,14 @@ export const projects = sqliteTable('Projects', {
 	projectId: text('project_id').primaryKey(),
 	name: text('name').notNull(),
 	destinationUrl: text('destination_url').notNull(),
+	// Keyword baked into this project's QR codes as `&p=<key>`, resolved against
+	// the FALLBACK_DESTINATIONS var when D1 is unreachable. See schema.sql for why
+	// this is a keyword rather than the destination URL.
+	//
+	// Deliberately not `.default('')`, for the same reason as qrCodes.location:
+	// keeping it required in Drizzle forces every insert to pass a value, so the
+	// code never depends on a column default being present in a given database.
+	fallbackKey: text('fallback_key').notNull(),
 	createdAt: text('created_at').notNull(),
 	adminUserId: text('admin_user_id'),
 });

@@ -37,6 +37,27 @@ export interface Bindings {
 	LOGIN_LIMITER?: RateLimiter;
 	/** Build identifier surfaced by /healthz, for confirming what is deployed. */
 	GIT_SHA?: string;
+	/**
+	 * Where a scan goes when D1 cannot be reached at all — the last resort behind
+	 * FALLBACK_DESTINATIONS. Covers QR codes printed before `&p=` existed, and
+	 * keywords with no configured entry. Unset means answer 503 instead.
+	 */
+	FALLBACK_URL?: string;
+	/**
+	 * Keyword → destination URL, consulted only when the database read fails.
+	 *
+	 * Accepts an object or a JSON string, because `vars` in wrangler.jsonc is JSON
+	 * and which one arrives depends on how the value was quoted. Unusable entries
+	 * are dropped rather than throwing — see src/fallback.ts.
+	 */
+	FALLBACK_DESTINATIONS?: string | Record<string, string>;
+	/**
+	 * Local testing only: makes the scan endpoint's database read throw, so the
+	 * fallback path can actually be exercised (the local D1 is embedded and cannot
+	 * be switched off). Every use is logged as `db_failure_simulated`, so this
+	 * cannot sit unnoticed in a deployed environment.
+	 */
+	SIMULATE_DB_FAILURE?: string;
 }
 
 /** The shape of a Workers Rate Limiting binding (`type: "ratelimit"`). */
