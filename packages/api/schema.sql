@@ -12,6 +12,19 @@ CREATE TABLE IF NOT EXISTS Projects (
     project_id TEXT NOT NULL UNIQUE,
     name TEXT NOT NULL,
     destination_url TEXT NOT NULL,
+    -- Short ASCII keyword baked into this project's QR codes as `&p=<key>`, used
+    -- to pick a destination from the FALLBACK_DESTINATIONS var when D1 cannot be
+    -- reached. Deliberately not the destination URL itself: a recoverable URL in
+    -- the QR costs its own length in payload and grows the symbol from 53x53 to
+    -- 69x69 modules, while a keyword costs 4 — and because the parameter only
+    -- selects from an operator-configured list, an open redirect is impossible.
+    --
+    -- Optional; '' means "no keyword". The admin UI then derives one from the
+    -- destination host, so no backfill is needed for older projects.
+    --
+    -- Changing it does not update QR codes that are already printed — those keep
+    -- the keyword they were generated with.
+    fallback_key TEXT NOT NULL DEFAULT '',
     created_at TEXT NOT NULL,
     admin_user_id TEXT
 );

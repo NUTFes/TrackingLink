@@ -1,0 +1,30 @@
+-- Adds Projects.fallback_key: a short keyword identifying where a project's QR
+-- codes should send people when D1 cannot be reached.
+--
+-- Background: the scan endpoint reads the destination URL out of D1 on every
+-- request. If D1 is unreachable — most plausibly because a Free-plan daily quota
+-- ran out, which leaves the Worker running while every D1 call fails — the
+-- redirect used to answer with a bare 500. Printed posters would all go dead at
+-- once. QR codes now carry `&p=<fallback_key>`, and the Worker maps that keyword
+-- to a URL from the FALLBACK_DESTINATIONS var, with no database involved.
+--
+-- A keyword rather than the destination URL itself: putting a recoverable URL in
+-- the QR costs roughly its own length in payload (no amount of hashing or
+-- encryption avoids that — a hash is one-way, and ciphertext is longer than
+-- plaintext), which grew the symbol from 53x53 to 69x69 modules. A keyword costs
+-- 4 modules. It also makes an open redirect structurally impossible, because the
+-- parameter only ever selects from a list the operator configured.
+--
+-- Existing rows get ''. Nothing needs backfilling: the admin UI derives a keyword
+-- from the destination host when the column is blank, so QR codes generated for
+-- older projects still carry a usable one.
+--
+-- Idempotent? No — re-running errors with "duplicate column name". A brand-new
+-- database does not need this file at all; schema.sql already has the column.
+--
+-- Apply with:
+--   wrangler d1 execute trackinglink-db --local  --file=./migrations/0003_add_project_fallback_key.sql
+--   wrangler d1 execute trackinglink-db --remote --file=./migrations/0003_add_project_fallback_key.sql
+-- Then re-run schema.sql.
+
+ALTER TABLE Projects ADD COLUMN fallback_key TEXT NOT NULL DEFAULT '';

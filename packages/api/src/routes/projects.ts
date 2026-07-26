@@ -30,14 +30,33 @@ const httpUrl = z
 		}
 	}, 'Only http(s) URLs are allowed');
 
+/**
+ * Keyword baked into this project's QR codes as `&p=<key>`, resolved against the
+ * FALLBACK_DESTINATIONS var when D1 is unreachable (see src/fallback.ts).
+ *
+ * ASCII-only on purpose: a Japanese keyword is percent-encoded at 9 characters per
+ * character, which grows the printed symbol from 57x57 to 61x61 modules. Optional
+ * — '' means the admin UI derives one from the destination host instead.
+ */
+const FALLBACK_KEY_MAX = 40;
+const fallbackKey = z
+	.string()
+	.max(FALLBACK_KEY_MAX)
+	.regex(
+		/^$|^[a-z0-9][a-z0-9-]*$/,
+		'Use lowercase letters, digits and hyphens only',
+	);
+
 const createProjectBodySchema = z.object({
 	projectName: z.string().min(1, 'Project name is required').max(NAME_MAX),
 	destinationUrl: httpUrl,
+	fallbackKey: fallbackKey.optional(),
 });
 
 const updateProjectBodySchema = z.object({
 	projectName: z.string().min(1).max(NAME_MAX).optional(),
 	destinationUrl: httpUrl.optional(),
+	fallbackKey: fallbackKey.optional(),
 });
 
 const createQRCodeBodySchema = z.object({
@@ -220,6 +239,7 @@ projectsApp.get('/', async (c) => {
 			projectId: p.projectId,
 			name: p.name,
 			destinationUrl: p.destinationUrl,
+			fallbackKey: p.fallbackKey,
 			createdAt: p.createdAt,
 			adminUserId: p.adminUserId,
 			accessCount: accessCountMap[p.projectId] ?? 0,
@@ -251,18 +271,28 @@ projectsApp.post('/', async (c) => {
 	const user = c.get('user');
 	const projectId = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
+	// Passed explicitly rather than relying on the column default, because Drizzle
+	// deliberately keeps the field required — see the note on schema.projects.
+	const key = parsed.data.fallbackKey ?? '';
 
 	const db = getDb(c.env.DB);
 	await db.insert(schema.projects).values({
 		projectId,
 		name: projectName,
 		destinationUrl,
+		fallbackKey: key,
 		createdAt,
 		adminUserId: user?.sub ?? null,
 	});
 
 	return c.json(
-		{ projectId, name: projectName, destinationUrl, createdAt },
+		{
+			projectId,
+			name: projectName,
+			destinationUrl,
+			fallbackKey: key,
+			createdAt,
+		},
 		201,
 	);
 });
@@ -289,6 +319,7 @@ projectsApp.get('/:id', async (c) => {
 		projectId: project.projectId,
 		name: project.name,
 		destinationUrl: project.destinationUrl,
+		fallbackKey: project.fallbackKey,
 		createdAt: project.createdAt,
 		adminUserId: project.adminUserId,
 	});
@@ -323,6 +354,10 @@ projectsApp.put('/:id', async (c) => {
 		values.name = parsed.data.projectName;
 	if (parsed.data.destinationUrl !== undefined)
 		values.destinationUrl = parsed.data.destinationUrl;
+	// `!== undefined` so that fallbackKey: '' clears the keyword; a truthiness check
+	// would silently ignore that, as it did for qrCodes.location.
+	if (parsed.data.fallbackKey !== undefined)
+		values.fallbackKey = parsed.data.fallbackKey;
 	if (Object.keys(values).length === 0) {
 		return fail(c, 400, ErrorCodes.NO_FIELDS_TO_UPDATE);
 	}

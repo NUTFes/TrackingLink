@@ -36,6 +36,9 @@ importers:
       typescript:
         specifier: ^5.7.2
         version: 5.9.3
+      vitest:
+        specifier: 2.1.8
+        version: 2.1.8(@types/node@22.20.0)(jsdom@25.0.1)(lightningcss@1.32.0)
       wrangler:
         specifier: ^3.90.0
         version: 3.114.17(@cloudflare/workers-types@4.20260702.1)

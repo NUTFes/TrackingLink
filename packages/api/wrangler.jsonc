@@ -48,7 +48,21 @@
 		// "async" (default) takes the access-log write off the redirect's response
 		// path. Flip to "sync" from the dashboard — no deploy needed — if writes
 		// ever look like they are going missing during an event.
-		"LOG_WRITE_MODE": "async"
+		"LOG_WRITE_MODE": "async",
+		// Last resort when D1 cannot be reached: without this the scan endpoint
+		// answers 503 rather than sending the visitor anywhere.
+		"FALLBACK_URL": "https://www.nutfes.net/",
+		// Keyword -> destination, used only while D1 is unreachable. The keyword is
+		// the one baked into each project's QR codes as `&p=<key>` (Projects.fallback_key).
+		//
+		// Add an entry when you settle a project's keyword. Forgetting is safe: the
+		// scan falls through to FALLBACK_URL above, and `scan_fallback_not_configured`
+		// shows up in Workers Logs during normal operation so you find out before an
+		// outage rather than during one.
+		"FALLBACK_DESTINATIONS": {
+			// "instagram": "https://www.instagram.com/nutfes_official/",
+			// "web": "https://www.nutfes.net/event/"
+		}
 	}
 	// Secrets (set with `wrangler secret put <NAME>`, never committed):
 	//   JWT_SECRET     - random string used to sign/verify admin session tokens

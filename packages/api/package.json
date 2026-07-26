@@ -15,6 +15,8 @@
 		"cf-typegen": "wrangler types --env-interface CloudflareBindings",
 		"db:apply:local": "wrangler d1 execute trackinglink-db --local --file=./schema.sql",
 		"db:apply:remote": "wrangler d1 execute trackinglink-db --remote --file=./schema.sql",
+		"test": "vitest run",
+		"test:watch": "vitest",
 		"loadtest:seed": "node loadtest/seed/generate.mjs --logs=100000",
 		"loadtest:apply": "node loadtest/seed/run.mjs --target=local",
 		"loadtest:smoke": "k6 run loadtest/k6/smoke.js",
@@ -34,6 +36,7 @@
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20241127.0",
 		"typescript": "^5.7.2",
+		"vitest": "2.1.8",
 		"wrangler": "^3.90.0"
 	}
 }
