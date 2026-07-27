@@ -115,7 +115,19 @@ const en: Dictionary = {
 	'projects.fallbackKeyLabel': 'Fallback keyword',
 	'projects.fallbackKeyPlaceholder': 'e.g. instagram',
 	'projects.fallbackKeyHint':
-		'Baked into this project’s QR codes and used to pick a destination if the database is unreachable. Suggested from the destination URL. Changing it later does not update QR codes that are already printed.',
+		'Baked into this project’s QR codes and used to pick a destination if the database is unreachable. Changing it later does not update QR codes that are already printed.',
+	'projects.fallbackKeyNone': '(none — use the site-wide fallback)',
+	'projects.fallbackKeySelected':
+		'If the database is unreachable, scans go to {url}',
+	'projects.fallbackKeyNoneSelected':
+		'With no keyword, scans go to {url} if the database is unreachable.',
+	'projects.fallbackKeyEmpty':
+		'No destinations are configured yet. Add them to FALLBACK_DESTINATIONS in packages/api/wrangler.jsonc.',
+	'projects.fallbackKeyOrphaned':
+		'“{key}” is no longer in the Worker configuration. QR codes already printed with it will use the site-wide fallback until it is added back.',
+	'projects.fallbackKeyOrphanedOption': '{key} (not in the configuration)',
+	'projects.fallbackKeyListUnavailable':
+		'Could not load the configured destinations. Enter the keyword manually.',
 
 	'createProject.heading': 'New project',
 	'createProject.subtitle': 'Create a new TrackingLink project',
@@ -265,7 +277,19 @@ const ja: Dictionary = {
 	'projects.fallbackKeyLabel': 'フォールバック用キーワード',
 	'projects.fallbackKeyPlaceholder': '例：instagram',
 	'projects.fallbackKeyHint':
-		'このプロジェクトのQRコードに埋め込まれ、データベースに接続できないときの転送先を選ぶのに使われます。転送先URLから自動で提案されます。後から変更しても、既に印刷したQRコードには反映されません。',
+		'このプロジェクトのQRコードに埋め込まれ、データベースに接続できないときの転送先を選ぶのに使われます。後から変更しても、既に印刷したQRコードには反映されません。',
+	'projects.fallbackKeyNone': '(なし — 全体のフォールバック先を使う)',
+	'projects.fallbackKeySelected':
+		'データベースに接続できないとき、{url} へ転送されます。',
+	'projects.fallbackKeyNoneSelected':
+		'キーワードなしの場合、データベースに接続できないときは {url} へ転送されます。',
+	'projects.fallbackKeyEmpty':
+		'転送先がまだ設定されていません。packages/api/wrangler.jsonc の FALLBACK_DESTINATIONS に追加してください。',
+	'projects.fallbackKeyOrphaned':
+		'「{key}」はWorkerの設定にありません。このキーワードで既に印刷したQRコードは、設定に戻すまで全体のフォールバック先へ転送されます。',
+	'projects.fallbackKeyOrphanedOption': '{key}(設定にありません)',
+	'projects.fallbackKeyListUnavailable':
+		'設定されている転送先を読み込めませんでした。キーワードを手で入力してください。',
 
 	'createProject.heading': 'プロジェクト作成',
 	'createProject.subtitle': '新しいTrackingLinkプロジェクトを作成します。',

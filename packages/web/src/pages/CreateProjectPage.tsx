@@ -1,10 +1,12 @@
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { type FormEvent, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
+import { FallbackKeySelect } from '../components/FallbackKeySelect';
 import { PermissionGuard } from '../components/PermissionGuard';
 import { useToast } from '../components/ToastProvider';
 import { TRACKING_LINK_API_URL } from '../config';
 import { useApiErrorMessage } from '../hooks/useApiError';
+import { useFallbackDestinations } from '../hooks/useFallbackDestinations';
 import {
 	useFieldErrors,
 	validateFallbackKey,
@@ -32,6 +34,7 @@ function CreateProjectForm() {
 	const toast = useToast();
 	const describeError = useApiErrorMessage();
 	const { errors, validate, setFromFields } = useFieldErrors();
+	const fallback = useFallbackDestinations();
 	const [projectName, setProjectName] = useState('');
 	const [destinationUrl, setDestinationUrl] = useState('');
 	const [fallbackKey, setFallbackKey] = useState('');
@@ -44,7 +47,12 @@ function CreateProjectForm() {
 
 	const onDestinationUrlChange = (value: string) => {
 		setDestinationUrl(value);
-		if (!fallbackKeyTouched.current) setFallbackKey(deriveFallbackKey(value));
+		if (fallbackKeyTouched.current) return;
+		// Only suggest a keyword that actually exists in the Worker configuration:
+		// anything else would look chosen while doing nothing during an outage.
+		const derived = deriveFallbackKey(value);
+		const match = fallback.destinations.find((d) => d.key === derived);
+		setFallbackKey(match ? match.key : '');
 	};
 
 	const handleSubmit = async (e: FormEvent) => {
@@ -185,43 +193,20 @@ function CreateProjectForm() {
 						) : null}
 					</div>
 
-					<div className="space-y-1.5">
-						<label htmlFor="fallbackKey" className={labelBase}>
-							{t('projects.fallbackKeyLabel')}{' '}
-							<span className="font-normal text-muted-foreground">
-								({t('common.optional')})
-							</span>
-						</label>
-						<input
-							id="fallbackKey"
-							type="text"
-							value={fallbackKey}
-							onChange={(e) => {
-								fallbackKeyTouched.current = true;
-								setFallbackKey(e.target.value);
-							}}
-							onBlur={() => setFallbackKey((v) => v.trim())}
-							placeholder={t('projects.fallbackKeyPlaceholder')}
-							maxLength={FALLBACK_KEY_MAX}
-							aria-invalid={errors.fallbackKey ? true : undefined}
-							aria-describedby={
-								errors.fallbackKey ? 'fallbackKey-error' : 'fallbackKey-hint'
-							}
-							className={inputBase}
-						/>
-						{errors.fallbackKey ? (
-							<p id="fallbackKey-error" className={fieldErrorText}>
-								{errors.fallbackKey}
-							</p>
-						) : (
-							<p
-								id="fallbackKey-hint"
-								className="text-xs text-muted-foreground"
-							>
-								{t('projects.fallbackKeyHint')}
-							</p>
-						)}
-					</div>
+					<FallbackKeySelect
+						id="fallbackKey"
+						value={fallbackKey}
+						onChange={(v) => {
+							fallbackKeyTouched.current = true;
+							setFallbackKey(v);
+						}}
+						destinations={fallback.destinations}
+						staticFallbackUrl={fallback.staticFallbackUrl}
+						isLoading={fallback.isLoading}
+						failed={fallback.failed}
+						error={errors.fallbackKey}
+						disabled={isSubmitting}
+					/>
 
 					<div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:gap-3">
 						{/* Deliberately not disabled on empty input: an inert button with no

@@ -12,12 +12,14 @@ import { type FormEvent, useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { FallbackKeySelect } from '../components/FallbackKeySelect';
 import { Modal } from '../components/Modal';
 import { Pagination } from '../components/Pagination';
 import { PermissionGuard } from '../components/PermissionGuard';
 import { useToast } from '../components/ToastProvider';
 import { TRACKING_LINK_API_URL } from '../config';
 import { useApiErrorMessage } from '../hooks/useApiError';
+import { useFallbackDestinations } from '../hooks/useFallbackDestinations';
 import {
 	useFieldErrors,
 	validateFallbackKey,
@@ -182,6 +184,7 @@ function ManageProjectsContent() {
 		clear: clearErrors,
 		setFromFields,
 	} = useFieldErrors();
+	const fallback = useFallbackDestinations();
 
 	const isDirty =
 		editing !== null &&
@@ -202,8 +205,11 @@ function ManageProjectsContent() {
 
 	const onEditUrlChange = (value: string) => {
 		setEditUrl(value);
-		if (!fallbackKeyTouched.current)
-			setEditFallbackKey(deriveFallbackKey(value));
+		if (fallbackKeyTouched.current) return;
+		// Only ever suggest a keyword the Worker actually knows about.
+		const derived = deriveFallbackKey(value);
+		const match = fallback.destinations.find((d) => d.key === derived);
+		setEditFallbackKey(match ? match.key : '');
 	};
 
 	const closeEdit = () => {
@@ -542,46 +548,20 @@ function ManageProjectsContent() {
 							</p>
 						) : null}
 					</div>
-					<div className="space-y-1.5">
-						<label htmlFor="editProjectFallbackKey" className={labelBase}>
-							{t('projects.fallbackKeyLabel')}{' '}
-							<span className="font-normal text-muted-foreground">
-								({t('common.optional')})
-							</span>
-						</label>
-						<input
-							id="editProjectFallbackKey"
-							type="text"
-							value={editFallbackKey}
-							onChange={(e) => {
-								fallbackKeyTouched.current = true;
-								setEditFallbackKey(e.target.value);
-							}}
-							onBlur={() => setEditFallbackKey((v) => v.trim())}
-							placeholder={t('projects.fallbackKeyPlaceholder')}
-							maxLength={FALLBACK_KEY_MAX}
-							disabled={isSaving}
-							aria-invalid={errors.fallbackKey ? true : undefined}
-							aria-describedby={
-								errors.fallbackKey
-									? 'editProjectFallbackKey-error'
-									: 'editProjectFallbackKey-hint'
-							}
-							className={inputBase}
-						/>
-						{errors.fallbackKey ? (
-							<p id="editProjectFallbackKey-error" className={fieldErrorText}>
-								{errors.fallbackKey}
-							</p>
-						) : (
-							<p
-								id="editProjectFallbackKey-hint"
-								className="text-xs text-muted-foreground"
-							>
-								{t('projects.fallbackKeyHint')}
-							</p>
-						)}
-					</div>
+					<FallbackKeySelect
+						id="editProjectFallbackKey"
+						value={editFallbackKey}
+						onChange={(v) => {
+							fallbackKeyTouched.current = true;
+							setEditFallbackKey(v);
+						}}
+						destinations={fallback.destinations}
+						staticFallbackUrl={fallback.staticFallbackUrl}
+						isLoading={fallback.isLoading}
+						failed={fallback.failed}
+						error={errors.fallbackKey}
+						disabled={isSaving}
+					/>
 					<p className="text-xs text-muted-foreground">
 						{t('projects.destinationUrlPropagation')}
 					</p>
