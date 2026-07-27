@@ -4,6 +4,7 @@ import * as z from 'zod';
 import type { HonoEnv } from '../auth';
 import { getDb, schema } from '../db';
 import { ErrorCodes, fail } from '../errors';
+import { parseFallbackMap } from '../fallback';
 import { Permissions, hasPermission } from '../permissions';
 
 // Length caps keep a single row (and therefore the database, and the CSV export)
@@ -173,6 +174,39 @@ projectsApp.get('/qrcodes/:id', async (c) => {
 		.get();
 	if (!qrCode) return fail(c, 404, ErrorCodes.QR_CODE_NOT_FOUND);
 	return c.json(qrCode);
+});
+
+// GET /projects/fallback-destinations — the keywords a project may be assigned
+//
+// Registered before `/:id` so the literal path wins the route match.
+//
+// Exists because the admin UI cannot read FALLBACK_DESTINATIONS itself — it is a
+// Worker binding, not something the browser can see. Serving the list turns the
+// keyword field from free text into a picker, which removes the whole class of
+// "typed a keyword that is not in the config, so the fallback silently does
+// nothing" mistakes, and means adding or removing a destination in wrangler.jsonc
+// updates the form with no code change.
+projectsApp.get('/fallback-destinations', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_VIEW,
+		'TRACKING_LINK_VIEW',
+	);
+	if (denied) return denied;
+
+	const map = parseFallbackMap(c.env.FALLBACK_DESTINATIONS);
+	// Sorted so the dropdown order does not depend on how the JSON happened to be
+	// written.
+	const data = Object.entries(map)
+		.map(([key, url]) => ({ key, url }))
+		.sort((a, b) => a.key.localeCompare(b.key));
+
+	return c.json({
+		data,
+		// Lets the UI say "if the database is unreachable, scans go here instead"
+		// rather than leaving the no-keyword case unexplained.
+		staticFallbackUrl: c.env.FALLBACK_URL ?? null,
+	});
 });
 
 // GET /projects — paginated project list with access and QR code counts
