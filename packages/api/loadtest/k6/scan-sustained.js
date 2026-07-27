@@ -49,16 +49,20 @@ export default function () {
 	});
 }
 
-export function handleSummary(data) {
-	const issued = data.metrics.http_reqs.values.count;
-	console.log(`
-Requests issued: ${issued}
-
-Reconcile the access-log writes — this is the real integration test for moving
-the INSERT into waitUntil. Expect the delta to equal the number above:
-
-  wrangler d1 execute trackinglink-db --local --command \\
-    "SELECT COUNT(*) FROM AccessLogs WHERE project_id LIKE 'lt-project-%'"
-`);
-	return {};
+// Printed from teardown rather than handleSummary on purpose: returning a value
+// from handleSummary *replaces* k6's own stdout summary, which silently hid every
+// metric this scenario exists to produce.
+export function teardown() {
+	console.log(
+		[
+			'',
+			'Reconcile the access-log writes against http_reqs in the summary below.',
+			'This is the real integration test for moving the INSERT into waitUntil —',
+			'the delta should equal the request count exactly:',
+			'',
+			'  wrangler d1 execute trackinglink-db --local \\',
+			'    --command "SELECT COUNT(*) FROM AccessLogs"',
+			'',
+		].join('\n'),
+	);
 }
