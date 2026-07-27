@@ -60,8 +60,8 @@
 		// shows up in Workers Logs during normal operation so you find out before an
 		// outage rather than during one.
 		"FALLBACK_DESTINATIONS": {
-			// "instagram": "https://www.instagram.com/nutfes_official/",
-			// "web": "https://www.nutfes.net/event/"
+			"instagram": "https://www.instagram.com/nutfes?igsh=MTB1eXhpcWJ4YnQ0cA==",
+			"web": "https://www.nutfes.net/"
 		}
 	}
 	// Secrets (set with `wrangler secret put <NAME>`, never committed):
