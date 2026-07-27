@@ -14,7 +14,10 @@
 			"**/dist",
 			"**/node_modules",
 			"**/.wrangler",
-			"**/worker-configuration.d.ts"
+			"**/worker-configuration.d.ts",
+			// Generated load-test fixtures. `useIgnoreFile` above only reads the root
+			// .gitignore, so the nested one under loadtest/ does not reach biome.
+			"**/loadtest/.out"
 		]
 	},
 	"linter": {

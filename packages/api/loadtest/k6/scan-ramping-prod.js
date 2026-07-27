@@ -8,7 +8,7 @@ import {
 } from './lib/config.js';
 
 /**
- * P1 — the production run. Roughly 3,000 requests.
+ * P1 — the production run. Roughly 5,000 requests (measured: 5,062).
  *
  * ## Why 50 rps and not more
  *
@@ -43,7 +43,7 @@ import {
  *      The default manifest holds locally-seeded ids, and pointing this at
  *      production without reseeding measures nothing but 404s.
  *
- * Budget: ~3,000 requests = ~3,000 D1 writes = ~3% of the Free daily quota.
+ * Budget: ~5,060 requests = ~5,060 D1 writes = ~5% of the Free daily quota.
  * Deleting them afterwards costs the same again — D1 bills rows written, not net
  * change.
  *
