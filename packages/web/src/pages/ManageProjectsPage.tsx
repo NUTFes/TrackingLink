@@ -1,118 +1,82 @@
 import {
-	ChevronLeft,
-	ChevronRight,
 	Download,
 	ExternalLink,
-	Loader,
+	Loader2,
 	Pencil,
 	Plus,
 	QrCode,
 	ScanLine,
 	Trash2,
 } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { FallbackKeySelect } from '../components/FallbackKeySelect';
+import { Modal } from '../components/Modal';
+import { Pagination } from '../components/Pagination';
 import { PermissionGuard } from '../components/PermissionGuard';
+import { useToast } from '../components/ToastProvider';
 import { TRACKING_LINK_API_URL } from '../config';
+import { useApiErrorMessage } from '../hooks/useApiError';
+import { useFallbackDestinations } from '../hooks/useFallbackDestinations';
+import {
+	useFieldErrors,
+	validateFallbackKey,
+	validateHttpUrl,
+} from '../hooks/useFieldErrors';
+import { useListQuery } from '../hooks/useListQuery';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
-import { authFetch } from '../lib/api';
+import { ApiError, assertOk, authFetch } from '../lib/api';
+import { downloadBlob } from '../lib/download';
+import { formatDateTime, slugForFilename } from '../lib/format';
 import { useTranslation } from '../lib/i18n';
+import { deriveFallbackKey } from '../lib/qr';
+import {
+	btnPrimary,
+	btnRow,
+	btnRowDestructive,
+	btnSecondary,
+	fieldErrorText,
+	inputBase,
+	labelBase,
+} from '../lib/styles';
 
 interface Project {
 	id: string;
+	projectId: string;
 	name: string;
 	destinationUrl: string;
+	fallbackKey: string;
 	createdAt: string;
 	adminUserId: string;
-	projectId: string;
 	accessCount: number;
 	qrCodeCount: number;
 }
 
 const PAGE_SIZE = 10;
+const NAME_MAX = 200;
+const URL_MAX = 2048;
+const FALLBACK_KEY_MAX = 40;
 
-function Pagination({
-	currentPage,
-	totalPages,
-	total,
-	onPageChange,
-}: {
-	currentPage: number;
-	totalPages: number;
-	total: number;
-	onPageChange: (page: number) => void;
-}) {
-	const { t } = useTranslation();
-	if (totalPages <= 1) return null;
-	const start = (currentPage - 1) * PAGE_SIZE + 1;
-	const end = Math.min(currentPage * PAGE_SIZE, total);
-	const pages = Array.from({ length: totalPages }, (_, i) => i + 1)
-		.filter(
-			(p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1,
-		)
-		.reduce<(number | '…')[]>((acc, p, idx, arr) => {
-			if (idx > 0 && (arr[idx - 1] as number) < p - 1) acc.push('…');
-			acc.push(p);
-			return acc;
-		}, []);
+/**
+ * One in-flight row action at a time.
+ *
+ * A single `pendingAction` rather than parallel `downloadingId` / `deletingId`
+ * flags — which is also the answer to the PR #1 review note about
+ * `downloadingId` looking unnecessary. It is necessary (it drives the per-row
+ * spinner), and delete needed the same thing: without it the delete button was
+ * never disabled, so a double-tap fired two DELETEs and the second 404'd,
+ * showing an error *after* a successful delete.
+ */
+type PendingAction = { projectId: string; kind: 'csv' | 'delete' } | null;
 
-	return (
-		<div className="flex items-center justify-between border-t px-5 py-3">
-			<p className="text-xs text-muted-foreground">
-				{t('pagination.range', { start, end, total })}
-			</p>
-			<div className="flex items-center gap-1">
-				<button
-					type="button"
-					onClick={() => onPageChange(Math.max(1, currentPage - 1))}
-					disabled={currentPage === 1}
-					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-				>
-					<ChevronLeft className="h-4 w-4" />
-				</button>
-				{pages.map((p, idx) =>
-					p === '…' ? (
-						<span
-							key={`ellipsis-${idx}`}
-							className="px-1 text-xs text-muted-foreground"
-						>
-							…
-						</span>
-					) : (
-						<button
-							key={p}
-							type="button"
-							onClick={() => onPageChange(p as number)}
-							className={`h-7 min-w-7 rounded-md border px-2 text-xs transition-colors ${
-								currentPage === p
-									? 'bg-primary text-primary-foreground border-primary'
-									: 'hover:bg-muted/50'
-							}`}
-						>
-							{p}
-						</button>
-					),
-				)}
-				<button
-					type="button"
-					onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-					disabled={currentPage === totalPages}
-					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-				>
-					<ChevronRight className="h-4 w-4" />
-				</button>
-			</div>
-		</div>
-	);
-}
-
-function ProjectCard({
+function ProjectRowActions({
 	project,
 	canEdit,
 	canAnalytics,
 	canDelete,
-	isDownloading,
+	pending,
 	onEdit,
 	onDownloadCsv,
 	onDelete,
@@ -121,487 +85,501 @@ function ProjectCard({
 	canEdit: boolean;
 	canAnalytics: boolean;
 	canDelete: boolean;
-	isDownloading: boolean;
+	pending: PendingAction;
 	onEdit: () => void;
 	onDownloadCsv: () => void;
 	onDelete: () => void;
 }) {
 	const { t } = useTranslation();
+	const isDownloading =
+		pending?.projectId === project.projectId && pending.kind === 'csv';
+	const isDeleting =
+		pending?.projectId === project.projectId && pending.kind === 'delete';
+
 	return (
-		<div className="border-b last:border-0 px-4 py-4 hover:bg-muted/30 transition-colors">
-			<div className="flex items-start justify-between gap-2 mb-2">
-				<p className="font-medium text-sm leading-snug">{project.name}</p>
-				<span className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums shrink-0">
-					<span
-						className="flex items-center gap-1"
-						title={t('common.qrCodeCount')}
-					>
-						<QrCode className="h-3.5 w-3.5" />
-						{project.qrCodeCount.toLocaleString()}
-					</span>
-					<span className="flex items-center gap-1" title={t('common.scans')}>
-						<ScanLine className="h-3.5 w-3.5" />
-						{project.accessCount.toLocaleString()}
-					</span>
-				</span>
-			</div>
-			<a
-				href={project.destinationUrl}
-				target="_blank"
-				rel="noopener noreferrer"
-				className="flex items-center gap-1 text-xs text-primary hover:underline mb-3 min-w-0"
-			>
-				<span className="truncate">{project.destinationUrl}</span>
-				<ExternalLink className="h-3 w-3 shrink-0" />
-			</a>
-			<div className="flex items-center justify-between">
-				<span className="text-xs text-muted-foreground">
-					{project.createdAt
-						? new Date(project.createdAt).toLocaleDateString()
-						: '-'}
-				</span>
-				<div className="flex items-center gap-2">
-					<Link
-						to={`/links/${project.projectId}/qrcodes`}
-						className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 transition-colors"
-					>
-						<QrCode className="h-3.5 w-3.5" />
-						{t('projects.qrCodesLink')}
-					</Link>
-					{canEdit && (
-						<button
-							type="button"
-							onClick={onEdit}
-							className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 transition-colors"
-						>
-							<Pencil className="h-3.5 w-3.5" />
-							{t('common.edit')}
-						</button>
+		// A 2-column grid on a phone: four labelled 44px buttons cannot fit one row
+		// at 375px, and the previous `flex gap-2` had no wrap at all.
+		<div className="grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
+			<Link to={`/links/${project.projectId}/qrcodes`} className={btnRow}>
+				<QrCode className="h-3.5 w-3.5" />
+				{t('projects.qrCodesLink')}
+			</Link>
+			{canEdit && (
+				<button type="button" onClick={onEdit} className={btnRow}>
+					<Pencil className="h-3.5 w-3.5" />
+					{t('common.edit')}
+				</button>
+			)}
+			{canAnalytics && (
+				<button
+					type="button"
+					onClick={onDownloadCsv}
+					disabled={isDownloading}
+					className={btnRow}
+				>
+					{isDownloading ? (
+						<Loader2 className="h-3.5 w-3.5 animate-spin" />
+					) : (
+						<Download className="h-3.5 w-3.5" />
 					)}
-					{canAnalytics && (
-						<button
-							type="button"
-							onClick={onDownloadCsv}
-							disabled={isDownloading}
-							className="flex items-center gap-1 rounded-md border px-2.5 py-1.5 text-xs hover:bg-muted/50 disabled:opacity-50 transition-colors"
-						>
-							{isDownloading ? (
-								<Loader className="h-3.5 w-3.5 animate-spin" />
-							) : (
-								<Download className="h-3.5 w-3.5" />
-							)}
-							{t('projects.csvDownloadLink')}
-						</button>
+					{t('projects.csvDownloadLink')}
+				</button>
+			)}
+			{canDelete && (
+				<button
+					type="button"
+					onClick={onDelete}
+					disabled={isDeleting}
+					className={btnRowDestructive}
+				>
+					{isDeleting ? (
+						<Loader2 className="h-3.5 w-3.5 animate-spin" />
+					) : (
+						<Trash2 className="h-3.5 w-3.5" />
 					)}
-					{canDelete && (
-						<button
-							type="button"
-							onClick={onDelete}
-							className="flex items-center gap-1 rounded-md border border-destructive/30 px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
-						>
-							<Trash2 className="h-3.5 w-3.5" />
-							{t('common.delete')}
-						</button>
-					)}
-				</div>
-			</div>
+					{t('common.delete')}
+				</button>
+			)}
 		</div>
 	);
 }
 
 function ManageProjectsContent() {
 	const { user } = useAuthContext();
-	const { t } = useTranslation();
-	const canEdit = hasPermission(
-		user?.permissions ?? 0,
-		Permissions.TRACKING_LINK_EDIT,
-	);
+	const { t, locale } = useTranslation();
+	const toast = useToast();
+	const describeError = useApiErrorMessage();
+	const permissions = user?.permissions ?? 0;
+	const canEdit = hasPermission(permissions, Permissions.TRACKING_LINK_EDIT);
 	const canAnalytics = hasPermission(
-		user?.permissions ?? 0,
+		permissions,
 		Permissions.TRACKING_LINK_ANALYTICS,
 	);
 	const canDelete = hasPermission(
-		user?.permissions ?? 0,
+		permissions,
 		Permissions.TRACKING_LINK_DELETE,
 	);
 
-	const [projects, setProjects] = useState<Project[]>([]);
-	const [total, setTotal] = useState(0);
-	const [isLoading, setIsLoading] = useState(false);
-	const [error, setError] = useState<string | null>(null);
-	const [currentPage, setCurrentPage] = useState(1);
-	const [downloadingId, setDownloadingId] = useState<string | null>(null);
-	const [editingProject, setEditingProject] = useState<Project | null>(null);
+	const buildUrl = useCallback(
+		(page: number) =>
+			`${TRACKING_LINK_API_URL}/projects?page=${page}&limit=${PAGE_SIZE}`,
+		[],
+	);
+	const list = useListQuery<Project>(buildUrl, PAGE_SIZE);
+
+	const [pending, setPending] = useState<PendingAction>(null);
+	const [editing, setEditing] = useState<Project | null>(null);
 	const [editName, setEditName] = useState('');
 	const [editUrl, setEditUrl] = useState('');
+	const [editFallbackKey, setEditFallbackKey] = useState('');
+	// Stops the destination URL from overwriting a keyword the user chose by hand —
+	// the value ends up printed on posters, so a silent overwrite is worse than no
+	// suggestion at all.
+	const fallbackKeyTouched = useRef(false);
 	const [isSaving, setIsSaving] = useState(false);
+	const [confirmTarget, setConfirmTarget] = useState<Project | null>(null);
+	const {
+		errors,
+		validate,
+		clear: clearErrors,
+		setFromFields,
+	} = useFieldErrors();
+	const fallback = useFallbackDestinations();
 
-	const fetchProjects = useCallback(
-		async (page: number) => {
-			setIsLoading(true);
-			setError(null);
-			try {
-				const res = await authFetch(
-					`${TRACKING_LINK_API_URL}/projects?page=${page}&limit=${PAGE_SIZE}`,
-				);
-				if (!res.ok) throw new Error(`HTTP ${res.status}`);
-				const data = await res.json();
-				setProjects(Array.isArray(data.data) ? data.data : []);
-				setTotal(typeof data.total === 'number' ? data.total : 0);
-			} catch (e) {
-				setError(e instanceof Error ? e.message : t('common.genericError'));
-			} finally {
-				setIsLoading(false);
-			}
-		},
-		[t],
-	);
+	const isDirty =
+		editing !== null &&
+		(editName !== editing.name ||
+			editUrl !== editing.destinationUrl ||
+			editFallbackKey !== editing.fallbackKey);
 
-	useEffect(() => {
-		fetchProjects(currentPage);
-	}, [fetchProjects, currentPage]);
-
-	const handleDownloadCsv = async (project: Project) => {
-		setDownloadingId(project.projectId);
-		setError(null);
-		try {
-			const res = await authFetch(
-				`${TRACKING_LINK_API_URL}/projects/${project.projectId}/access-logs/csv`,
-			);
-			if (!res.ok) {
-				throw new Error(
-					res.status === 403
-						? t('csvExport.disabled')
-						: t('csvExport.downloadFailed'),
-				);
-			}
-			const blob = await res.blob();
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement('a');
-			a.href = url;
-			a.download = `access-logs-${project.projectId}.csv`;
-			a.click();
-			URL.revokeObjectURL(url);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : t('csvExport.downloadFailed'));
-		} finally {
-			setDownloadingId(null);
-		}
-	};
-
-	const openEditForm = (project: Project) => {
-		setEditingProject(project);
+	const openEdit = (project: Project) => {
+		setEditing(project);
 		setEditName(project.name);
 		setEditUrl(project.destinationUrl);
+		setEditFallbackKey(project.fallbackKey);
+		// An existing project already has a considered value (even a blank one), so
+		// the URL must not start rewriting it just because the form opened.
+		fallbackKeyTouched.current = true;
+		clearErrors();
 	};
 
-	const closeEditForm = () => {
-		setEditingProject(null);
+	const onEditUrlChange = (value: string) => {
+		setEditUrl(value);
+		if (fallbackKeyTouched.current) return;
+		// Only ever suggest a keyword the Worker actually knows about.
+		const derived = deriveFallbackKey(value);
+		const match = fallback.destinations.find((d) => d.key === derived);
+		setEditFallbackKey(match ? match.key : '');
+	};
+
+	const closeEdit = () => {
+		setEditing(null);
 		setEditName('');
 		setEditUrl('');
+		setEditFallbackKey('');
+		fallbackKeyTouched.current = false;
+		clearErrors();
+	};
+
+	const requestCloseEdit = () => {
+		if (isDirty && !window.confirm(t('common.discardChanges'))) return;
+		closeEdit();
 	};
 
 	const handleEditSubmit = async (e: FormEvent) => {
 		e.preventDefault();
-		if (!editingProject) return;
-		const projectName = editName.trim();
-		const destinationUrl = editUrl.trim();
-		if (!projectName || !destinationUrl) return;
+		if (!editing || isSaving) return;
+		const ok = validate({
+			projectName: {
+				id: 'editProjectName',
+				value: editName,
+				required: true,
+				maxLength: NAME_MAX,
+			},
+			destinationUrl: {
+				id: 'editProjectUrl',
+				value: editUrl,
+				required: true,
+				maxLength: URL_MAX,
+				validate: validateHttpUrl,
+			},
+			fallbackKey: {
+				id: 'editProjectFallbackKey',
+				value: editFallbackKey,
+				maxLength: FALLBACK_KEY_MAX,
+				validate: validateFallbackKey,
+			},
+		});
+		if (!ok) return;
 
 		setIsSaving(true);
-		setError(null);
 		try {
 			const res = await authFetch(
-				`${TRACKING_LINK_API_URL}/projects/${editingProject.projectId}`,
+				`${TRACKING_LINK_API_URL}/projects/${editing.projectId}`,
 				{
 					method: 'PUT',
 					headers: { 'Content-Type': 'application/json' },
-					body: JSON.stringify({ projectName, destinationUrl }),
+					body: JSON.stringify({
+						projectName: editName.trim(),
+						destinationUrl: editUrl.trim(),
+						fallbackKey: editFallbackKey.trim(),
+					}),
 				},
 			);
-			if (!res.ok) {
-				const data = await res.json().catch(() => ({}));
-				throw new Error(
-					(data as { error?: string }).error ?? `HTTP ${res.status}`,
-				);
+			await assertOk(res);
+			closeEdit();
+			await list.refresh();
+			toast.success(t('projects.updated'));
+		} catch (err) {
+			if (err instanceof ApiError && err.fields.length) {
+				setFromFields(err.fields, describeError(err));
 			}
-			closeEditForm();
-			await fetchProjects(currentPage);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : t('projects.editFailed'));
+			// Routed to a toast rather than form-local state, so the message survives
+			// the form closing.
+			toast.error(describeError(err));
 		} finally {
 			setIsSaving(false);
 		}
 	};
 
-	const handleDeleteProject = async (projectId: string) => {
-		if (!confirm(t('projects.deleteConfirm'))) return;
+	const handleDownloadCsv = async (project: Project) => {
+		setPending({ projectId: project.projectId, kind: 'csv' });
 		try {
 			const res = await authFetch(
-				`${TRACKING_LINK_API_URL}/projects/${projectId}`,
-				{ method: 'DELETE' },
+				`${TRACKING_LINK_API_URL}/projects/${project.projectId}/access-logs/csv`,
 			);
-			if (!res.ok) throw new Error(`HTTP ${res.status}`);
-			await fetchProjects(currentPage);
-		} catch (e) {
-			setError(e instanceof Error ? e.message : t('projects.deleteFailed'));
+			await assertOk(res);
+			const blob = await res.blob();
+			// Named from the project rather than its UUID, and saved through a helper
+			// that actually works — the old inline anchor was never appended to the
+			// document and revoked its URL synchronously, so in some browsers the
+			// download simply never happened and nothing was reported.
+			downloadBlob(blob, `${slugForFilename('access-logs', project.name)}.csv`);
+		} catch (err) {
+			toast.error(describeError(err));
+		} finally {
+			setPending(null);
 		}
 	};
 
-	const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+	const handleConfirmDelete = async () => {
+		if (!confirmTarget) return;
+		const target = confirmTarget;
+		setPending({ projectId: target.projectId, kind: 'delete' });
+		try {
+			const res = await authFetch(
+				`${TRACKING_LINK_API_URL}/projects/${target.projectId}`,
+				{ method: 'DELETE' },
+			);
+			await assertOk(res);
+			setConfirmTarget(null);
+			// The hook re-reads total from the server and clamps the page, so deleting
+			// the only row on the last page lands on a page that exists instead of an
+			// empty list with no way back.
+			await list.refresh();
+			toast.success(t('projects.deleted'));
+		} catch (err) {
+			toast.error(describeError(err));
+		} finally {
+			setPending(null);
+		}
+	};
+
+	const showEmpty = !list.isLoading && !list.error && list.items.length === 0;
 
 	return (
-		<div className="container mx-auto max-w-6xl p-4 md:p-6">
-			<div className="mb-6 flex items-center justify-between gap-3">
-				<h1 className="text-xl md:text-2xl font-bold">
-					{t('projects.heading')}
-				</h1>
+		<div className="mx-auto max-w-6xl p-4 sm:p-6">
+			<div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+				<div>
+					<h1 className="text-xl font-bold">{t('projects.cardTitle')}</h1>
+					<p className="mt-0.5 text-sm text-muted-foreground">
+						{t('common.totalCount', { total: list.total })}
+					</p>
+				</div>
 				{canEdit && (
-					<Link
-						to="/links/create"
-						className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 md:px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
-					>
+					<Link to="/links/create" className={btnPrimary}>
 						<Plus className="h-4 w-4" />
 						{t('nav.newProject')}
 					</Link>
 				)}
 			</div>
 
-			{error && (
-				<div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4">
-					<p className="text-sm text-destructive">{error}</p>
-				</div>
-			)}
-
-			{canEdit && editingProject && (
-				<div className="mb-6 rounded-lg border bg-card p-4 md:p-5 shadow-sm">
-					<h2 className="mb-4 font-semibold">{t('projects.editFormTitle')}</h2>
-					<form onSubmit={handleEditSubmit} className="space-y-3">
-						<div className="grid gap-3 sm:grid-cols-2">
-							<div className="space-y-1.5">
-								<label
-									htmlFor="editProjectName"
-									className="block text-sm font-medium"
-								>
-									{t('createProject.nameLabel')}
-								</label>
-								<input
-									id="editProjectName"
-									type="text"
-									value={editName}
-									onChange={(e) => setEditName(e.target.value)}
-									placeholder={t('createProject.namePlaceholder')}
-									required
-									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-								/>
-							</div>
-							<div className="space-y-1.5">
-								<label
-									htmlFor="editDestinationUrl"
-									className="block text-sm font-medium"
-								>
-									{t('createProject.urlLabel')}
-								</label>
-								<input
-									id="editDestinationUrl"
-									type="url"
-									value={editUrl}
-									onChange={(e) => setEditUrl(e.target.value)}
-									placeholder={t('createProject.urlPlaceholder')}
-									required
-									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-								/>
-							</div>
-						</div>
-						<div className="flex items-center gap-3">
-							<button
-								type="submit"
-								disabled={isSaving}
-								className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
-							>
-								{isSaving && <Loader className="h-4 w-4 animate-spin" />}
-								{t('common.save')}
-							</button>
-							<button
-								type="button"
-								onClick={closeEditForm}
-								className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted/50 transition-colors"
-							>
-								{t('common.cancel')}
-							</button>
-						</div>
-					</form>
-				</div>
-			)}
-
-			<div className="rounded-lg border bg-card shadow-sm">
-				<div className="border-b p-4 md:p-5">
-					<h2 className="font-semibold">{t('projects.cardTitle')}</h2>
-					<p className="mt-0.5 text-sm text-muted-foreground">
-						{isLoading
-							? t('common.loading')
-							: t('common.totalCount', { total })}
-					</p>
-				</div>
-
-				{isLoading ? (
-					<div className="divide-y">
-						{Array.from({ length: 5 }).map((_, i) => (
-							<div key={i} className="px-4 py-4 animate-pulse space-y-2">
-								<div className="h-4 w-40 rounded bg-muted" />
-								<div className="h-3 w-56 rounded bg-muted" />
-								<div className="h-3 w-24 rounded bg-muted" />
-							</div>
-						))}
+			<div className="overflow-hidden rounded-lg border bg-card shadow-sm">
+				{list.isLoading ? (
+					<div
+						role="status"
+						aria-live="polite"
+						className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground"
+					>
+						<Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+						{t('common.loading')}
 					</div>
-				) : projects.length === 0 ? (
-					<p className="px-5 py-10 text-center text-sm text-muted-foreground">
-						{t('projects.empty')}
-					</p>
+				) : list.error ? (
+					// Gated so the error and "no projects yet" can never appear together —
+					// that combination implied the user's data had been deleted.
+					<div className="flex flex-col items-center gap-3 p-10 text-center">
+						<p role="alert" className="text-sm text-destructive">
+							{list.error}
+						</p>
+						<button
+							type="button"
+							onClick={() => void list.refresh()}
+							className={btnSecondary}
+						>
+							{t('common.retry')}
+						</button>
+					</div>
+				) : showEmpty ? (
+					<div className="flex flex-col items-center gap-3 p-10 text-center">
+						<QrCode
+							className="h-8 w-8 text-muted-foreground"
+							aria-hidden="true"
+						/>
+						<p className="text-sm text-muted-foreground">
+							{t('projects.empty')}
+						</p>
+						{canEdit && (
+							<Link to="/links/create" className={btnPrimary}>
+								<Plus className="h-4 w-4" />
+								{t('projects.emptyCta')}
+							</Link>
+						)}
+					</div>
 				) : (
-					<>
-						{/* Mobile: card list */}
-						<div className="md:hidden">
-							{projects.map((project) => (
-								<ProjectCard
-									key={project.id}
-									project={project}
-									canEdit={canEdit}
-									canAnalytics={canAnalytics}
-									canDelete={canDelete}
-									isDownloading={downloadingId === project.projectId}
-									onEdit={() => openEditForm(project)}
-									onDownloadCsv={() => handleDownloadCsv(project)}
-									onDelete={() => handleDeleteProject(project.projectId)}
-								/>
-							))}
-						</div>
+					<ul className="divide-y divide-border">
+						{list.items.map((project) => (
+							<li
+								key={project.projectId}
+								className="p-4 transition-colors hover:bg-muted/30"
+							>
+								<div className="mb-2 flex items-start justify-between gap-3">
+									<p className="min-w-0 break-words text-sm font-medium leading-snug">
+										{project.name}
+									</p>
+									<span className="flex shrink-0 items-center gap-3 text-xs tabular-nums text-muted-foreground">
+										{/* Labelled text, not a `title` attribute: title is
+										    unavailable on touch and inconsistently exposed to
+										    assistive tech, so these numbers were unlabelled on the
+										    device this app is used on. */}
+										<span className="flex items-center gap-1">
+											<QrCode className="h-3.5 w-3.5" aria-hidden="true" />
+											<span className="sr-only">
+												{t('common.qrCodeCount')}:{' '}
+											</span>
+											{project.qrCodeCount.toLocaleString()}
+										</span>
+										<span className="flex items-center gap-1">
+											<ScanLine className="h-3.5 w-3.5" aria-hidden="true" />
+											<span className="sr-only">{t('common.scans')}: </span>
+											{project.accessCount.toLocaleString()}
+										</span>
+									</span>
+								</div>
 
-						{/* Desktop: table */}
-						<div className="hidden md:block overflow-x-auto">
-							<table className="w-full text-sm">
-								<thead>
-									<tr className="border-b bg-muted/50">
-										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											{t('common.name')}
-										</th>
-										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											{t('common.destinationUrl')}
-										</th>
-										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											{t('common.qrCodeCount')}
-										</th>
-										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											{t('common.scans')}
-										</th>
-										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											{t('common.created')}
-										</th>
-										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
-											{t('common.actions')}
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{projects.map((project) => (
-										<tr
-											key={project.id}
-											className="border-b last:border-0 hover:bg-muted/30 transition-colors"
-										>
-											<td className="px-5 py-3 font-medium">{project.name}</td>
-											<td className="px-5 py-3 max-w-xs">
-												<a
-													href={project.destinationUrl}
-													target="_blank"
-													rel="noopener noreferrer"
-													className="flex items-center gap-1 text-primary hover:underline truncate"
-												>
-													<span className="truncate">
-														{project.destinationUrl}
-													</span>
-													<ExternalLink className="h-3 w-3 flex-shrink-0" />
-												</a>
-											</td>
-											<td className="px-5 py-3">
-												<span className="flex items-center gap-1.5 text-sm tabular-nums">
-													<QrCode className="h-3.5 w-3.5 text-muted-foreground" />
-													{project.qrCodeCount.toLocaleString()}
-												</span>
-											</td>
-											<td className="px-5 py-3">
-												<span className="flex items-center gap-1.5 text-sm tabular-nums">
-													<ScanLine className="h-3.5 w-3.5 text-muted-foreground" />
-													{project.accessCount.toLocaleString()}
-												</span>
-											</td>
-											<td className="px-5 py-3 text-muted-foreground">
-												{project.createdAt
-													? new Date(project.createdAt).toLocaleDateString()
-													: '-'}
-											</td>
-											<td className="px-5 py-3">
-												<div className="flex items-center gap-2">
-													<Link
-														to={`/links/${project.projectId}/qrcodes`}
-														className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
-													>
-														<QrCode className="h-3 w-3" />
-														{t('projects.qrCodesLink')}
-													</Link>
-													{canEdit && (
-														<button
-															type="button"
-															onClick={() => openEditForm(project)}
-															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
-														>
-															<Pencil className="h-3 w-3" />
-															{t('common.edit')}
-														</button>
-													)}
-													{canAnalytics && (
-														<button
-															type="button"
-															onClick={() => handleDownloadCsv(project)}
-															disabled={downloadingId === project.projectId}
-															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 disabled:opacity-50 transition-colors"
-														>
-															{downloadingId === project.projectId ? (
-																<Loader className="h-3 w-3 animate-spin" />
-															) : (
-																<Download className="h-3 w-3" />
-															)}
-															{t('projects.csvDownloadLink')}
-														</button>
-													)}
-													{canDelete && (
-														<button
-															type="button"
-															onClick={() =>
-																handleDeleteProject(project.projectId)
-															}
-															className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
-														>
-															<Trash2 className="h-3 w-3" />
-															{t('common.delete')}
-														</button>
-													)}
-												</div>
-											</td>
-										</tr>
-									))}
-								</tbody>
-							</table>
-						</div>
-					</>
+								<a
+									href={project.destinationUrl}
+									target="_blank"
+									rel="noopener noreferrer"
+									className="mb-3 flex min-w-0 items-center gap-1 text-xs text-primary hover:underline"
+								>
+									<span className="truncate">{project.destinationUrl}</span>
+									<ExternalLink className="h-3 w-3 shrink-0" />
+								</a>
+
+								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+									<span className="text-xs text-muted-foreground">
+										{t('common.created')}:{' '}
+										{formatDateTime(project.createdAt, locale)}
+									</span>
+									<ProjectRowActions
+										project={project}
+										canEdit={canEdit}
+										canAnalytics={canAnalytics}
+										canDelete={canDelete}
+										pending={pending}
+										onEdit={() => openEdit(project)}
+										onDownloadCsv={() => void handleDownloadCsv(project)}
+										onDelete={() => setConfirmTarget(project)}
+									/>
+								</div>
+							</li>
+						))}
+					</ul>
 				)}
 
-				<Pagination
-					currentPage={currentPage}
-					totalPages={totalPages}
-					total={total}
-					onPageChange={setCurrentPage}
-				/>
+				{!list.error && !showEmpty ? (
+					<Pagination
+						page={list.page}
+						totalPages={list.totalPages}
+						total={list.total}
+						pageSize={PAGE_SIZE}
+						shownCount={list.items.length}
+						isLoading={list.isLoading}
+						onPageChange={list.setPage}
+					/>
+				) : null}
 			</div>
+
+			{/* A modal rather than a panel rendered above the table: clicking Edit on
+			    row 8 used to open a form off-screen with no scroll or focus move, so
+			    visually nothing happened and the button looked broken. */}
+			<Modal
+				open={editing !== null}
+				onClose={requestCloseEdit}
+				title={t('projects.editFormTitle')}
+				dismissible={!isSaving}
+				footer={
+					<div className="grid grid-cols-2 gap-2">
+						<button
+							type="button"
+							onClick={requestCloseEdit}
+							// Disabled mid-save: cancelling used to unmount the form while the
+							// request was still running, and the failure was then written to
+							// state nobody was rendering.
+							disabled={isSaving}
+							className={btnSecondary}
+						>
+							{t('common.cancel')}
+						</button>
+						<button
+							type="submit"
+							form="edit-project-form"
+							disabled={isSaving}
+							className={btnPrimary}
+						>
+							{isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
+							{isSaving ? t('common.saving') : t('common.save')}
+						</button>
+					</div>
+				}
+			>
+				<form
+					id="edit-project-form"
+					onSubmit={handleEditSubmit}
+					noValidate
+					className="space-y-4"
+				>
+					<div className="space-y-1.5">
+						<label htmlFor="editProjectName" className={labelBase}>
+							{t('common.name')}
+						</label>
+						<input
+							id="editProjectName"
+							type="text"
+							value={editName}
+							onChange={(e) => setEditName(e.target.value)}
+							onBlur={() => setEditName((v) => v.trim())}
+							maxLength={NAME_MAX}
+							disabled={isSaving}
+							aria-invalid={errors.projectName ? true : undefined}
+							aria-describedby={
+								errors.projectName ? 'editProjectName-error' : undefined
+							}
+							className={inputBase}
+						/>
+						{errors.projectName ? (
+							<p id="editProjectName-error" className={fieldErrorText}>
+								{errors.projectName}
+							</p>
+						) : null}
+					</div>
+					<div className="space-y-1.5">
+						<label htmlFor="editProjectUrl" className={labelBase}>
+							{t('common.destinationUrl')}
+						</label>
+						<input
+							id="editProjectUrl"
+							type="text"
+							inputMode="url"
+							value={editUrl}
+							onChange={(e) => onEditUrlChange(e.target.value)}
+							onBlur={() => setEditUrl((v) => v.trim())}
+							maxLength={URL_MAX}
+							disabled={isSaving}
+							aria-invalid={errors.destinationUrl ? true : undefined}
+							aria-describedby={
+								errors.destinationUrl ? 'editProjectUrl-error' : undefined
+							}
+							className={inputBase}
+						/>
+						{errors.destinationUrl ? (
+							<p id="editProjectUrl-error" className={fieldErrorText}>
+								{errors.destinationUrl}
+							</p>
+						) : null}
+					</div>
+					<FallbackKeySelect
+						id="editProjectFallbackKey"
+						value={editFallbackKey}
+						onChange={(v) => {
+							fallbackKeyTouched.current = true;
+							setEditFallbackKey(v);
+						}}
+						destinations={fallback.destinations}
+						staticFallbackUrl={fallback.staticFallbackUrl}
+						isLoading={fallback.isLoading}
+						failed={fallback.failed}
+						error={errors.fallbackKey}
+						disabled={isSaving}
+					/>
+					<p className="text-xs text-muted-foreground">
+						{t('projects.destinationUrlPropagation')}
+					</p>
+				</form>
+			</Modal>
+
+			<ConfirmDialog
+				open={confirmTarget !== null}
+				title={t('projects.deleteTitle')}
+				// Names the project. The old confirm() said only "Delete this project?",
+				// with Edit and Delete ~8px apart at 28px tall on a phone — no way to
+				// verify you had hit the right row before an irreversible cascade.
+				body={t('projects.deleteBody', { name: confirmTarget?.name ?? '' })}
+				confirmLabel={t('common.delete')}
+				pending={pending?.kind === 'delete'}
+				onConfirm={() => void handleConfirmDelete()}
+				onCancel={() => setConfirmTarget(null)}
+			/>
 		</div>
 	);
 }
