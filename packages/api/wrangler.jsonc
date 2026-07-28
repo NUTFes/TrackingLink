@@ -61,7 +61,16 @@
 		// outage rather than during one.
 		"FALLBACK_DESTINATIONS": {
 			"instagram": "https://www.instagram.com/nutfes?igsh=MTB1eXhpcWJ4YnQ0cA==",
-			"web": "https://www.nutfes.net/"
+			"web": "https://www.nutfes.net/",
+			// X is listed under two keys on purpose. "x" is what the admin UI derives
+			// from the host x.com, so it is the keyword a project gets if the field is
+			// left blank; "nut_fes" is the handle, which is what someone naming the
+			// keyword by hand reaches for. An unmatched keyword would silently send
+			// scans to FALLBACK_URL instead — exactly the case this map exists to
+			// prevent — and a spare entry costs nothing. Drop one once the projects
+			// are set up and you know which is in use.
+			"x": "https://x.com/nut_fes",
+			"nut_fes": "https://x.com/nut_fes"
 		}
 	}
 	// Secrets (set with `wrangler secret put <NAME>`, never committed):

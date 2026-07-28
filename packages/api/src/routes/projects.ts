@@ -44,8 +44,15 @@ const fallbackKey = z
 	.string()
 	.max(FALLBACK_KEY_MAX)
 	.regex(
-		/^$|^[a-z0-9][a-z0-9-]*$/,
-		'Use lowercase letters, digits and hyphens only',
+		// Underscore is allowed because social handles use it — the X account is
+		// x.com/nut_fes — and it costs nothing to carry: `_` is unreserved in RFC
+		// 3986, so encodeURIComponent leaves it alone, and the QR payload is
+		// already in byte mode (lowercase letters are absent from QR's
+		// alphanumeric set), so it is the same 8 bits as any other character.
+		// Hyphen stays last in the class: `[a-z0-9-_]` would read `9-_` as a range
+		// and quietly admit uppercase and punctuation.
+		/^$|^[a-z0-9][a-z0-9_-]*$/,
+		'Use lowercase letters, digits, hyphens and underscores only',
 	);
 
 const createProjectBodySchema = z.object({

@@ -72,14 +72,19 @@ export function useFieldErrors() {
 }
 
 /**
- * Mirrors the API's fallback-key rule (`^[a-z0-9][a-z0-9-]*$`).
+ * Mirrors the API's fallback-key rule (`^[a-z0-9][a-z0-9_-]*$`).
  *
  * ASCII-only is not arbitrary: the keyword is percent-encoded into the printed QR
  * payload, and a Japanese character costs 9 bytes there — enough to grow the
- * symbol from 57x57 to 61x61 modules.
+ * symbol from 57x57 to 61x61 modules. Underscore is fine by that measure (it is
+ * unreserved in RFC 3986, so it is never percent-encoded) and social handles
+ * need it.
+ *
+ * Keep the hyphen last in the character class — `[a-z0-9-_]` parses `9-_` as a
+ * range and would accept uppercase and punctuation.
  */
 export function validateFallbackKey(value: string): string | null {
-	return /^[a-z0-9][a-z0-9-]*$/.test(value) ? null : 'validation.fallbackKey';
+	return /^[a-z0-9][a-z0-9_-]*$/.test(value) ? null : 'validation.fallbackKey';
 }
 
 /** Shared http(s) check, mirroring the API's protocol allow-list. */

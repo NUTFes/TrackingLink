@@ -26,10 +26,23 @@ describe('deriveFallbackKey', () => {
 	});
 
 	it('lowercases and strips characters the API would reject', () => {
-		// The API accepts ^[a-z0-9][a-z0-9-]*$, so a suggestion that fails validation
-		// would be a self-inflicted form error.
-		expect(deriveFallbackKey('https://WWW.Insta_Gram.com/')).toBe('instagram');
+		// The API accepts ^[a-z0-9][a-z0-9_-]*$, so a suggestion that fails
+		// validation would be a self-inflicted form error.
+		expect(deriveFallbackKey('https://WWW.Insta_Gram.com/')).toBe('insta_gram');
 		expect(deriveFallbackKey('https://my-shop.example.com/')).toBe('my-shop');
+		expect(deriveFallbackKey('https://Insta!Gram.com/')).toBe('instagram');
+	});
+
+	// The X account is x.com/nut_fes: the handle carries the underscore, but the
+	// key is derived from the host, so it comes out as plain "x".
+	it('derives "x" for the X account', () => {
+		expect(deriveFallbackKey('https://x.com/nut_fes')).toBe('x');
+	});
+
+	it('does not leave a leading hyphen or underscore', () => {
+		// The rule requires an alphanumeric first character.
+		expect(deriveFallbackKey('https://_foo.example.com/')).toBe('foo');
+		expect(deriveFallbackKey('https://-foo.example.com/')).toBe('foo');
 	});
 
 	it('returns empty for anything unparseable rather than throwing', () => {

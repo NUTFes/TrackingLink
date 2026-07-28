@@ -69,7 +69,7 @@ const en: Dictionary = {
 	'validation.tooLong': 'Please use {max} characters or fewer.',
 	'validation.url': 'Enter a URL starting with http:// or https://',
 	'validation.fallbackKey':
-		'Use lowercase letters, digits and hyphens only, starting with a letter or digit.',
+		'Use lowercase letters, digits, hyphens and underscores only, starting with a letter or digit.',
 
 	'login.sessionExpired': 'Your session expired. Please sign in again.',
 	'login.retryAfterNetwork':
@@ -234,7 +234,7 @@ const ja: Dictionary = {
 	'validation.tooLong': '{max}文字以内で入力してください。',
 	'validation.url': 'http:// または https:// で始まるURLを入力してください。',
 	'validation.fallbackKey':
-		'半角の英小文字・数字・ハイフンのみ、先頭は英数字で入力してください。',
+		'半角の英小文字・数字・ハイフン・アンダーバーのみ、先頭は英数字で入力してください。',
 
 	'login.sessionExpired':
 		'セッションの有効期限が切れました。再度ログインしてください。',

@@ -41,11 +41,17 @@ export function deriveFallbackKey(destinationUrl: string): string {
 	}
 
 	const label = host.replace(/^www\./i, '').split('.')[0] ?? '';
-	return label
-		.toLowerCase()
-		.replace(/[^a-z0-9-]/g, '')
-		.replace(/^-+/, '')
-		.slice(0, FALLBACK_KEY_MAX);
+	return (
+		label
+			.toLowerCase()
+			// Keep exactly the characters the API accepts, so a suggestion can never
+			// fail the form's own validation. Hyphen last in the class: `[^a-z0-9-_]`
+			// would read `9-_` as a range.
+			.replace(/[^a-z0-9_-]/g, '')
+			// The rule requires an alphanumeric first character.
+			.replace(/^[-_]+/, '')
+			.slice(0, FALLBACK_KEY_MAX)
+	);
 }
 
 /**
