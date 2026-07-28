@@ -25,6 +25,10 @@ app.use('*', async (c, next) => {
 		origin: allowed,
 		allowMethods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
 		allowHeaders: ['Content-Type', 'Authorization'],
+		// Content-Disposition is not CORS-safelisted, so without this the admin UI
+		// cannot read the filename the CSV endpoints build, and every export saves
+		// under a name the client had to guess instead.
+		exposeHeaders: ['Content-Disposition'],
 		maxAge: 86400,
 	})(c, next);
 });

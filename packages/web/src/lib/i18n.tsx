@@ -128,6 +128,10 @@ const en: Dictionary = {
 	'projects.fallbackKeyOrphanedOption': '{key} (not in the configuration)',
 	'projects.fallbackKeyListUnavailable':
 		'Could not load the configured destinations. Enter the keyword manually.',
+	'projects.selectFor': 'Include {name} in the CSV export',
+	'projects.selectAllOnPage': 'Select all on this page',
+	'projects.selectedCount': '{count} selected',
+	'projects.downloadSelectedCsv': 'Download selected as CSV',
 
 	'createProject.heading': 'New project',
 	'createProject.subtitle': 'Create a new TrackingLink project',
@@ -296,6 +300,10 @@ const ja: Dictionary = {
 	'projects.fallbackKeyOrphanedOption': '{key}(設定にありません)',
 	'projects.fallbackKeyListUnavailable':
 		'設定されている転送先を読み込めませんでした。キーワードを手で入力してください。',
+	'projects.selectFor': '{name} をCSV出力に含める',
+	'projects.selectAllOnPage': 'このページを全選択',
+	'projects.selectedCount': '{count} 件選択中',
+	'projects.downloadSelectedCsv': '選択分をCSVでDL',
 
 	'createProject.heading': 'プロジェクト作成',
 	'createProject.subtitle': '新しいTrackingLinkプロジェクトを作成します。',

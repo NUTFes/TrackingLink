@@ -1,4 +1,16 @@
-import { and, count, desc, eq, gte, inArray, lt, lte, or } from 'drizzle-orm';
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	gt,
+	gte,
+	inArray,
+	lt,
+	lte,
+	or,
+} from 'drizzle-orm';
 import { type Context, Hono } from 'hono';
 import * as z from 'zod';
 import type { HonoEnv } from '../auth';
@@ -597,6 +609,247 @@ function normalizeBound(value: string, edge: 'start' | 'end'): string {
 	return edge === 'start' ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
 }
 
+/**
+ * Most projects one request may combine.
+ *
+ * Bounds the `IN (...)` list, but the limit that matters is CSV_MAX_ROWS below,
+ * which is applied to the *combined* total rather than per project — otherwise
+ * ticking ten boxes would authorise ten times the row budget in a single click,
+ * and on the Free plan that is 10% of the daily read quota gone at once.
+ */
+const MAX_CSV_PROJECTS = 50;
+
+const bulkCsvQuerySchema = csvQuerySchema.extend({
+	// Comma-separated so the whole thing stays a GET: the browser has to navigate
+	// to it (or fetch and save a blob) and a POST cannot be a plain download.
+	projectIds: z
+		.string()
+		.min(1)
+		.max(MAX_CSV_PROJECTS * 40),
+});
+
+// GET /projects/access-logs/csv?projectIds=a,b,c — one CSV covering several
+// projects, for the checkbox selection in the admin UI.
+//
+// Two path segments, so it cannot be swallowed by `/:id` (one segment) or by
+// `/qrcodes/:id` (first segment is literal).
+projectsApp.get('/access-logs/csv', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_ANALYTICS,
+		'TRACKING_LINK_ANALYTICS',
+	);
+	if (denied) return denied;
+
+	if (!isFlagEnabled(c.env.CSV_EXPORT_ENABLED)) {
+		return fail(c, 403, ErrorCodes.CSV_EXPORT_DISABLED);
+	}
+
+	const parsedQuery = bulkCsvQuerySchema.safeParse(c.req.query());
+	if (!parsedQuery.success) {
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			details: parsedQuery.error.flatten(),
+		});
+	}
+
+	const projectIds = [
+		...new Set(
+			parsedQuery.data.projectIds
+				.split(',')
+				.map((value) => value.trim())
+				.filter(Boolean),
+		),
+	];
+	if (projectIds.length === 0) {
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			details: { formErrors: ['projectIds is empty'], fieldErrors: {} },
+		});
+	}
+	if (projectIds.length > MAX_CSV_PROJECTS) {
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			meta: { count: projectIds.length, max: MAX_CSV_PROJECTS },
+		});
+	}
+
+	const from = parsedQuery.data.from
+		? normalizeBound(parsedQuery.data.from, 'start')
+		: undefined;
+	const to = parsedQuery.data.to
+		? normalizeBound(parsedQuery.data.to, 'end')
+		: undefined;
+
+	const db = getDb(c.env.DB);
+	const rangeFilter = and(
+		inArray(schema.accessLogs.projectId, projectIds),
+		...(from ? [gte(schema.accessLogs.accessedAt, from)] : []),
+		...(to ? [lte(schema.accessLogs.accessedAt, to)] : []),
+	);
+
+	const [projects, countRows] = await Promise.all([
+		db
+			.select({
+				projectId: schema.projects.projectId,
+				name: schema.projects.name,
+			})
+			.from(schema.projects)
+			.where(inArray(schema.projects.projectId, projectIds))
+			.all(),
+		db.select({ total: count() }).from(schema.accessLogs).where(rangeFilter),
+	]);
+	// Every id has to exist. Silently skipping unknown ones would produce a file
+	// that looks complete but is missing a project the user ticked.
+	if (projects.length !== projectIds.length) {
+		return fail(c, 404, ErrorCodes.PROJECT_NOT_FOUND, {
+			meta: {
+				requested: projectIds.length,
+				found: projects.length,
+			},
+		});
+	}
+	const projectNames = Object.fromEntries(
+		projects.map((project) => [project.projectId, project.name]),
+	);
+
+	const maxRows =
+		Number(c.env.CSV_MAX_ROWS ?? DEFAULT_MAX_CSV_ROWS) || DEFAULT_MAX_CSV_ROWS;
+	const total = countRows[0]?.total ?? 0;
+	if (total > maxRows) {
+		return fail(c, 413, ErrorCodes.TOO_MANY_ROWS, {
+			meta: { total, max: maxRows },
+		});
+	}
+
+	// プロジェクト leads, because in a combined file it is the column that says
+	// which project a row belongs to — the single-project export has no need of it.
+	const header = [
+		'プロジェクト',
+		'日時',
+		'名前',
+		'媒体',
+		'場所',
+		'ボット',
+		'User Agent',
+		'IPアドレス',
+	];
+	const encoder = new TextEncoder();
+	// Ordered by project first, then time descending within each project. Not a
+	// global chronological sort: the only index available is
+	// (project_id, accessed_at DESC), and ordering across projects by time alone
+	// would force SQLite to sort the whole matched set in memory — 50k rows of that
+	// inside a Worker is how you hit the 10ms CPU limit. Grouping by project also
+	// happens to be the more useful layout in a spreadsheet.
+	let cursor: { projectId: string; accessedAt: string; id: number } | null =
+		null;
+	let done = false;
+
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			controller.enqueue(encoder.encode(`﻿${toCsvRow(header)}\r\n`));
+		},
+		async pull(controller) {
+			if (done) {
+				controller.close();
+				return;
+			}
+			const rows = await db
+				.select({
+					id: schema.accessLogs.id,
+					projectId: schema.accessLogs.projectId,
+					accessedAt: schema.accessLogs.accessedAt,
+					isBot: schema.accessLogs.isBot,
+					userAgent: schema.accessLogs.userAgent,
+					ipAddress: schema.accessLogs.ipAddress,
+					name: schema.qrCodes.name,
+					medium: schema.qrCodes.medium,
+					location: schema.qrCodes.location,
+				})
+				.from(schema.accessLogs)
+				.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
+				.where(
+					cursor
+						? and(
+								rangeFilter,
+								// Three-column keyset matching the ORDER BY exactly: advance to
+								// a later project, or stay in this one and move back in time.
+								or(
+									gt(schema.accessLogs.projectId, cursor.projectId),
+									and(
+										eq(schema.accessLogs.projectId, cursor.projectId),
+										or(
+											lt(schema.accessLogs.accessedAt, cursor.accessedAt),
+											and(
+												eq(schema.accessLogs.accessedAt, cursor.accessedAt),
+												lt(schema.accessLogs.id, cursor.id),
+											),
+										),
+									),
+								),
+							)
+						: rangeFilter,
+				)
+				.orderBy(
+					asc(schema.accessLogs.projectId),
+					desc(schema.accessLogs.accessedAt),
+					desc(schema.accessLogs.id),
+				)
+				.limit(CSV_PAGE_SIZE)
+				.all();
+
+			if (rows.length === 0) {
+				controller.close();
+				return;
+			}
+
+			controller.enqueue(
+				encoder.encode(
+					`${rows
+						.map((log) =>
+							toCsvRow([
+								projectNames[log.projectId] ?? '',
+								log.accessedAt,
+								log.name ?? '',
+								log.medium ?? '',
+								log.location ?? '',
+								log.isBot ? '1' : '0',
+								log.userAgent ?? '',
+								log.ipAddress ?? '',
+							]),
+						)
+						.join('\r\n')}\r\n`,
+				),
+			);
+
+			const last = rows[rows.length - 1];
+			cursor = {
+				projectId: last.projectId,
+				accessedAt: last.accessedAt,
+				id: last.id,
+			};
+			if (rows.length < CSV_PAGE_SIZE) done = true;
+		},
+	});
+
+	return new Response(stream, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/csv; charset=utf-8',
+			'Content-Disposition': contentDisposition(
+				// Requested order, not the order the IN(...) happened to return: the
+				// filename names the first project and counts the rest, and SQLite
+				// answers in rowid order, so without this the file gets named after
+				// whichever selected project is oldest rather than the one at the top
+				// of the user's selection.
+				bulkCsvFilename(
+					projectIds.map((id) => projectNames[id] ?? ''),
+					from,
+					to,
+				),
+			),
+			'Cache-Control': 'no-store',
+		},
+	});
+});
+
 // GET /projects/:id/access-logs/csv — access log as a streamed CSV download.
 // Gated by CSV_EXPORT_ENABLED so it can ship disabled and be turned on later.
 projectsApp.get('/:id/access-logs/csv', async (c) => {
@@ -755,6 +1008,27 @@ projectsApp.get('/:id/access-logs/csv', async (c) => {
 		},
 	});
 });
+
+/**
+ * `アクセスログ_造形大祭2026ほか3件_2026-07-25.csv` for a multi-project export.
+ *
+ * Names the first project and counts the rest rather than joining them all: five
+ * Japanese project names concatenated overruns what a downloads folder will show,
+ * and the file already carries a プロジェクト column for the detail. A selection of
+ * one is named exactly as the single-project export would name it, so ticking one
+ * box and using the per-row button give the same file.
+ */
+function bulkCsvFilename(
+	projectNames: string[],
+	from?: string,
+	to?: string,
+): string {
+	const [first, ...rest] = projectNames;
+	const label = rest.length
+		? `${first ?? ''}ほか${rest.length}件`
+		: (first ?? 'project');
+	return csvFilename(label, from, to);
+}
 
 /** `アクセスログ_造形大祭2026_2026-07-25.csv`, sanitised for a filesystem. */
 function csvFilename(projectName: string, from?: string, to?: string): string {
