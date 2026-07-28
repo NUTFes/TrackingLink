@@ -5,14 +5,18 @@
 	"version": "0.1.0",
 	"description": "QR redirect/logging Worker and admin API for TrackingLink.",
 	"license": "MIT",
-	"engines": { "node": ">=20" },
+	"engines": {
+		"node": ">=20"
+	},
 	"scripts": {
 		"dev": "wrangler dev",
 		"deploy": "wrangler deploy --minify",
 		"typecheck": "tsc --noEmit",
 		"cf-typegen": "wrangler types --env-interface CloudflareBindings",
 		"db:apply:local": "wrangler d1 execute trackinglink-db --local --file=./schema.sql",
-		"db:apply:remote": "wrangler d1 execute trackinglink-db --remote --file=./schema.sql"
+		"db:apply:remote": "wrangler d1 execute trackinglink-db --remote --file=./schema.sql",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.36.4",
@@ -23,6 +27,7 @@
 	"devDependencies": {
 		"@cloudflare/workers-types": "^4.20241127.0",
 		"typescript": "^5.7.2",
+		"vitest": "2.1.8",
 		"wrangler": "^3.90.0"
 	}
 }

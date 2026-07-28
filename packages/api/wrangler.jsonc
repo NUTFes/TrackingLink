@@ -13,6 +13,20 @@
 	// Custom domain / route the redirect endpoint should live on.
 	// Leave this out entirely to use the workers.dev subdomain instead.
 	// "routes": [{ "pattern": "links.example.com", "custom_domain": true }],
+	// Rate limiter for POST /auth/login. `unsafe` bindings are excluded from
+	// `wrangler types`, so the interface is declared by hand in src/auth/types.ts.
+	// The limiter is per-colo, not global — plenty for an admin panel.
+	"unsafe": {
+		"bindings": [
+			{
+				"name": "LOGIN_LIMITER",
+				"type": "ratelimit",
+				"namespace_id": "1001",
+				// `period` only accepts 10 or 60.
+				"simple": { "limit": 10, "period": 60 }
+			}
+		]
+	},
 	"d1_databases": [
 		{
 			"binding": "DB",
@@ -25,7 +39,30 @@
 		// Use "*" for local development; restrict this in production.
 		"ALLOWED_ORIGINS": "http://localhost:5173,http://127.0.0.1:5173,https://trackinglink-web.nutfes-nutmeg9488.workers.dev",
 		// Set to "true" to turn on the CSV export endpoint. Stays "false" until told to activate.
-		"CSV_EXPORT_ENABLED": "false"
+		// A real JSON boolean (true) is accepted too, so an unquoted value is not a silent no-op.
+		"CSV_EXPORT_ENABLED": "false",
+		// Rows one CSV export may contain before it returns 413 and asks for a narrower
+		// date range. Defaults to 50000, which costs 25 of the Workers Free
+		// 50-subrequest budget while streaming. Raising it needs CSV_PAGE_SIZE raised too.
+		"CSV_MAX_ROWS": "50000",
+		// "async" (default) takes the access-log write off the redirect's response
+		// path. Flip to "sync" from the dashboard — no deploy needed — if writes
+		// ever look like they are going missing during an event.
+		"LOG_WRITE_MODE": "async",
+		// Last resort when D1 cannot be reached: without this the scan endpoint
+		// answers 503 rather than sending the visitor anywhere.
+		"FALLBACK_URL": "https://www.nutfes.net/",
+		// Keyword -> destination, used only while D1 is unreachable. The keyword is
+		// the one baked into each project's QR codes as `&p=<key>` (Projects.fallback_key).
+		//
+		// Add an entry when you settle a project's keyword. Forgetting is safe: the
+		// scan falls through to FALLBACK_URL above, and `scan_fallback_not_configured`
+		// shows up in Workers Logs during normal operation so you find out before an
+		// outage rather than during one.
+		"FALLBACK_DESTINATIONS": {
+			"instagram": "https://www.instagram.com/nutfes?igsh=MTB1eXhpcWJ4YnQ0cA==",
+			"web": "https://www.nutfes.net/"
+		}
 	}
 	// Secrets (set with `wrangler secret put <NAME>`, never committed):
 	//   JWT_SECRET     - random string used to sign/verify admin session tokens

@@ -1,4 +1,5 @@
 import type { MiddlewareHandler } from 'hono';
+import { ErrorCodes, fail } from '../errors';
 import { verifyLocalSession } from './local';
 import type { HonoEnv, Verifier } from './types';
 
@@ -23,14 +24,22 @@ export function createAuthMiddleware(
 	verify: Verifier,
 ): MiddlewareHandler<HonoEnv> {
 	return async (c, next) => {
+		// Both failures share one code: the web app turns UNAUTHORIZED into "your
+		// session expired, sign in again" and sends the user to /login, and the
+		// distinction between "no header" and "bad token" is not something a user
+		// can act on differently.
 		const token = extractBearerToken(c.req.header('Authorization'));
 		if (!token) {
-			return c.json({ error: 'Authorization header required' }, 401);
+			return fail(c, 401, ErrorCodes.UNAUTHORIZED, {
+				message: 'Authorization header required',
+			});
 		}
 
 		const user = await verify(token, c.env);
 		if (!user) {
-			return c.json({ error: 'Invalid or expired token' }, 401);
+			return fail(c, 401, ErrorCodes.UNAUTHORIZED, {
+				message: 'Invalid or expired token',
+			});
 		}
 
 		c.set('user', user);

@@ -1,40 +1,102 @@
-import { count, desc, eq } from 'drizzle-orm';
-import { Hono } from 'hono';
+import { and, count, desc, eq, gte, inArray, lt, lte, or } from 'drizzle-orm';
+import { type Context, Hono } from 'hono';
 import * as z from 'zod';
 import type { HonoEnv } from '../auth';
 import { getDb, schema } from '../db';
+import { ErrorCodes, fail } from '../errors';
+import { parseFallbackMap } from '../fallback';
 import { Permissions, hasPermission } from '../permissions';
 
+// Length caps keep a single row (and therefore the database, and the CSV export)
+// bounded. Without them a 10k-character name is accepted and then wrecks every
+// table that renders it.
+const NAME_MAX = 200;
+const URL_MAX = 2048;
+
+// z.string().url() accepts *any* parseable URL, including `javascript:`,
+// `data:`, `vbscript:` and `file:` (verified against zod 3.25). That value is
+// then 302-redirected to by the Worker and rendered as `<a href>` in the admin
+// UI, which makes it a stored-XSS / open-redirect vector reachable by anyone who
+// can create or edit a project — and the admin session holds the API token.
+const httpUrl = z
+	.string()
+	.url()
+	.max(URL_MAX)
+	.refine((value) => {
+		try {
+			const { protocol } = new URL(value);
+			return protocol === 'http:' || protocol === 'https:';
+		} catch {
+			return false;
+		}
+	}, 'Only http(s) URLs are allowed');
+
+/**
+ * Keyword baked into this project's QR codes as `&p=<key>`, resolved against the
+ * FALLBACK_DESTINATIONS var when D1 is unreachable (see src/fallback.ts).
+ *
+ * ASCII-only on purpose: a Japanese keyword is percent-encoded at 9 characters per
+ * character, which grows the printed symbol from 57x57 to 61x61 modules. Optional
+ * — '' means the admin UI derives one from the destination host instead.
+ */
+const FALLBACK_KEY_MAX = 40;
+const fallbackKey = z
+	.string()
+	.max(FALLBACK_KEY_MAX)
+	.regex(
+		/^$|^[a-z0-9][a-z0-9-]*$/,
+		'Use lowercase letters, digits and hyphens only',
+	);
+
 const createProjectBodySchema = z.object({
-	projectName: z.string().min(1, 'Project name is required'),
-	destinationUrl: z.string().url('Enter a valid URL'),
+	projectName: z.string().min(1, 'Project name is required').max(NAME_MAX),
+	destinationUrl: httpUrl,
+	fallbackKey: fallbackKey.optional(),
 });
 
 const updateProjectBodySchema = z.object({
-	projectName: z.string().min(1).optional(),
-	destinationUrl: z.string().url().optional(),
+	projectName: z.string().min(1).max(NAME_MAX).optional(),
+	destinationUrl: httpUrl.optional(),
+	fallbackKey: fallbackKey.optional(),
 });
 
 const createQRCodeBodySchema = z.object({
 	projectId: z.string().min(1, 'projectId is required'),
-	name: z.string().min(1, 'name is required'),
-	medium: z.string().min(1, 'medium is required'),
-	location: z.string().min(1, 'location is required'),
+	name: z.string().min(1, 'name is required').max(NAME_MAX),
+	medium: z.string().min(1, 'medium is required').max(NAME_MAX),
+	// Optional: staff record where an item is posted only when it is useful.
+	// Stored as '' when absent — see the note on schema.qrCodes.location.
+	location: z.string().max(NAME_MAX).optional(),
 });
 
 const updateQRCodeBodySchema = z.object({
-	name: z.string().min(1).optional(),
-	medium: z.string().min(1).optional(),
-	location: z.string().min(1).optional(),
+	name: z.string().min(1).max(NAME_MAX).optional(),
+	medium: z.string().min(1).max(NAME_MAX).optional(),
+	location: z.string().max(NAME_MAX).optional(),
 });
 
-// Pagination params, capped at 100 rows/page.
-function parsePagination(query: Record<string, string | undefined>) {
-	const page = Math.max(1, Number(query.page ?? '1'));
-	const limit = Math.min(Math.max(1, Number(query.limit ?? '10')), 100);
+/**
+ * Pagination params.
+ *
+ * `maxLimit` is per-endpoint because /projects fans out into an `inArray` over
+ * the page's ids, and D1 caps a query at roughly 100 bound parameters.
+ */
+function parsePagination(
+	query: Record<string, string | undefined>,
+	maxLimit = 100,
+) {
+	const page = Math.max(1, Number(query.page ?? '1') || 1);
+	const limit = Math.min(
+		Math.max(1, Number(query.limit ?? '10') || 10),
+		maxLimit,
+	);
 	const offset = (page - 1) * limit;
 	return { page, limit, offset };
 }
+
+// Half of D1's ~100 bound-parameter ceiling, so the aggregation below has room
+// to spare.
+const PROJECTS_MAX_LIMIT = 50;
 
 // True if `error` is a SQLite UNIQUE constraint violation, regardless of the
 // exact wrapper D1's driver throws it in.
@@ -44,17 +106,65 @@ function isUniqueConstraintError(error: unknown): boolean {
 	);
 }
 
+/**
+ * Returns a 403 response when the caller lacks `permission`, or null to proceed.
+ *
+ * Every read and write below is gated. Previously only DELETE and the QR code
+ * mutations checked, while the README documented otherwise — harmless while a
+ * single admin login grants ALL_PERMISSIONS, but it silently leaks the moment a
+ * lesser-privileged token exists, which is the entire point of the Verifier
+ * seam.
+ */
+function denyUnlessPermitted(
+	c: Context<HonoEnv>,
+	permission: number,
+	permissionName: string,
+) {
+	const user = c.get('user');
+	if (!hasPermission(user?.permissions ?? 0, permission)) {
+		return fail(c, 403, ErrorCodes.PERMISSION_REQUIRED, {
+			message: `${permissionName} permission required`,
+			meta: { required: permissionName },
+		});
+	}
+	return null;
+}
+
 const projectsApp = new Hono<HonoEnv>();
 
-// GET /projects/qrcodes — every QR code across all projects
+// GET /projects/qrcodes — paginated QR codes across every project
 projectsApp.get('/qrcodes', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_VIEW,
+		'TRACKING_LINK_VIEW',
+	);
+	if (denied) return denied;
+
+	const { limit, offset } = parsePagination(c.req.query());
 	const db = getDb(c.env.DB);
-	const qrCodes = await db.select().from(schema.qrCodes).all();
-	return c.json(qrCodes);
+	const [qrCodes, totalRows] = await Promise.all([
+		db
+			.select()
+			.from(schema.qrCodes)
+			.orderBy(desc(schema.qrCodes.createdAt), desc(schema.qrCodes.id))
+			.limit(limit)
+			.offset(offset)
+			.all(),
+		db.select({ total: count() }).from(schema.qrCodes),
+	]);
+	return c.json({ data: qrCodes, total: totalRows[0]?.total ?? 0 });
 });
 
 // GET /projects/qrcodes/:id — a single QR code
 projectsApp.get('/qrcodes/:id', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_VIEW,
+		'TRACKING_LINK_VIEW',
+	);
+	if (denied) return denied;
+
 	const qrId = c.req.param('id');
 	const db = getDb(c.env.DB);
 	const qrCode = await db
@@ -62,28 +172,95 @@ projectsApp.get('/qrcodes/:id', async (c) => {
 		.from(schema.qrCodes)
 		.where(eq(schema.qrCodes.id, qrId))
 		.get();
-	if (!qrCode) return c.json({ error: 'QR code not found' }, 404);
+	if (!qrCode) return fail(c, 404, ErrorCodes.QR_CODE_NOT_FOUND);
 	return c.json(qrCode);
+});
+
+// GET /projects/fallback-destinations — the keywords a project may be assigned
+//
+// Registered before `/:id` so the literal path wins the route match.
+//
+// Exists because the admin UI cannot read FALLBACK_DESTINATIONS itself — it is a
+// Worker binding, not something the browser can see. Serving the list turns the
+// keyword field from free text into a picker, which removes the whole class of
+// "typed a keyword that is not in the config, so the fallback silently does
+// nothing" mistakes, and means adding or removing a destination in wrangler.jsonc
+// updates the form with no code change.
+projectsApp.get('/fallback-destinations', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_VIEW,
+		'TRACKING_LINK_VIEW',
+	);
+	if (denied) return denied;
+
+	const map = parseFallbackMap(c.env.FALLBACK_DESTINATIONS);
+	// Sorted so the dropdown order does not depend on how the JSON happened to be
+	// written.
+	const data = Object.entries(map)
+		.map(([key, url]) => ({ key, url }))
+		.sort((a, b) => a.key.localeCompare(b.key));
+
+	return c.json({
+		data,
+		// Lets the UI say "if the database is unreachable, scans go here instead"
+		// rather than leaving the no-keyword case unexplained.
+		staticFallbackUrl: c.env.FALLBACK_URL ?? null,
+	});
 });
 
 // GET /projects — paginated project list with access and QR code counts
 projectsApp.get('/', async (c) => {
-	const { limit, offset } = parsePagination(c.req.query());
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_VIEW,
+		'TRACKING_LINK_VIEW',
+	);
+	if (denied) return denied;
+
+	const { limit, offset } = parsePagination(c.req.query(), PROJECTS_MAX_LIMIT);
 	const db = getDb(c.env.DB);
-	const [rows, totalRows, accessCounts, qrCounts] = await Promise.all([
-		db.select().from(schema.projects).limit(limit).offset(offset).all(),
+
+	// ORDER BY is not cosmetic: without it D1 returns rows in whatever order it
+	// likes, so a freshly created project need not appear on page 1 (users
+	// conclude the create failed and make another), and rows can repeat or vanish
+	// between pages. ISO-8601 sorts chronologically as text; project_id breaks
+	// same-millisecond ties so paging is deterministic.
+	const [rows, totalRows] = await Promise.all([
+		db
+			.select()
+			.from(schema.projects)
+			.orderBy(desc(schema.projects.createdAt), desc(schema.projects.projectId))
+			.limit(limit)
+			.offset(offset)
+			.all(),
 		db.select({ total: count() }).from(schema.projects),
-		db
-			.select({ projectId: schema.accessLogs.projectId, accessCount: count() })
-			.from(schema.accessLogs)
-			.groupBy(schema.accessLogs.projectId)
-			.all(),
-		db
-			.select({ projectId: schema.qrCodes.projectId, qrCodeCount: count() })
-			.from(schema.qrCodes)
-			.groupBy(schema.qrCodes.projectId)
-			.all(),
 	]);
+
+	// Scoped to the current page's ids. This used to GROUP BY over *all* of
+	// AccessLogs and *all* of QRCodes on every request regardless of page — a
+	// full scan of the largest table in the system to render ten rows.
+	const projectIds = rows.map((row) => row.projectId);
+	const [accessCounts, qrCounts] = projectIds.length
+		? await Promise.all([
+				db
+					.select({
+						projectId: schema.accessLogs.projectId,
+						accessCount: count(),
+					})
+					.from(schema.accessLogs)
+					.where(inArray(schema.accessLogs.projectId, projectIds))
+					.groupBy(schema.accessLogs.projectId)
+					.all(),
+				db
+					.select({ projectId: schema.qrCodes.projectId, qrCodeCount: count() })
+					.from(schema.qrCodes)
+					.where(inArray(schema.qrCodes.projectId, projectIds))
+					.groupBy(schema.qrCodes.projectId)
+					.all(),
+			])
+		: [[], []];
+
 	const accessCountMap = Object.fromEntries(
 		accessCounts.map((row) => [row.projectId, row.accessCount]),
 	);
@@ -96,6 +273,7 @@ projectsApp.get('/', async (c) => {
 			projectId: p.projectId,
 			name: p.name,
 			destinationUrl: p.destinationUrl,
+			fallbackKey: p.fallbackKey,
 			createdAt: p.createdAt,
 			adminUserId: p.adminUserId,
 			accessCount: accessCountMap[p.projectId] ?? 0,
@@ -107,37 +285,61 @@ projectsApp.get('/', async (c) => {
 
 // POST /projects — create a project
 projectsApp.post('/', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_EDIT,
+		'TRACKING_LINK_EDIT',
+	);
+	if (denied) return denied;
+
 	const parsed = createProjectBodySchema.safeParse(
 		await c.req.json().catch(() => null),
 	);
 	if (!parsed.success) {
-		return c.json(
-			{ error: 'Invalid request body', details: parsed.error.flatten() },
-			400,
-		);
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			fields: Object.keys(parsed.error.flatten().fieldErrors),
+			details: parsed.error.flatten(),
+		});
 	}
 	const { projectName, destinationUrl } = parsed.data;
 	const user = c.get('user');
 	const projectId = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
+	// Passed explicitly rather than relying on the column default, because Drizzle
+	// deliberately keeps the field required — see the note on schema.projects.
+	const key = parsed.data.fallbackKey ?? '';
 
 	const db = getDb(c.env.DB);
 	await db.insert(schema.projects).values({
 		projectId,
 		name: projectName,
 		destinationUrl,
+		fallbackKey: key,
 		createdAt,
 		adminUserId: user?.sub ?? null,
 	});
 
 	return c.json(
-		{ projectId, name: projectName, destinationUrl, createdAt },
+		{
+			projectId,
+			name: projectName,
+			destinationUrl,
+			fallbackKey: key,
+			createdAt,
+		},
 		201,
 	);
 });
 
 // GET /projects/:id — a single project
 projectsApp.get('/:id', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_VIEW,
+		'TRACKING_LINK_VIEW',
+	);
+	if (denied) return denied;
+
 	const projectId = c.req.param('id');
 	const db = getDb(c.env.DB);
 	const project = await db
@@ -145,12 +347,13 @@ projectsApp.get('/:id', async (c) => {
 		.from(schema.projects)
 		.where(eq(schema.projects.projectId, projectId))
 		.get();
-	if (!project) return c.json({ error: 'Project not found' }, 404);
+	if (!project) return fail(c, 404, ErrorCodes.PROJECT_NOT_FOUND);
 	return c.json({
 		id: project.projectId,
 		projectId: project.projectId,
 		name: project.name,
 		destinationUrl: project.destinationUrl,
+		fallbackKey: project.fallbackKey,
 		createdAt: project.createdAt,
 		adminUserId: project.adminUserId,
 	});
@@ -158,23 +361,39 @@ projectsApp.get('/:id', async (c) => {
 
 // PUT /projects/:id — update a project
 projectsApp.put('/:id', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_EDIT,
+		'TRACKING_LINK_EDIT',
+	);
+	if (denied) return denied;
+
 	const projectId = c.req.param('id');
 	const parsed = updateProjectBodySchema.safeParse(
 		await c.req.json().catch(() => null),
 	);
 	if (!parsed.success) {
-		return c.json(
-			{ error: 'Invalid request body', details: parsed.error.flatten() },
-			400,
-		);
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			fields: Object.keys(parsed.error.flatten().fieldErrors),
+			details: parsed.error.flatten(),
+		});
 	}
 
+	// `!== undefined` rather than truthiness, so "field omitted" and "field set
+	// to a blank string" stay distinguishable. Both of these have .min(1) so they
+	// cannot actually be blanked, but the QR code handler below relies on the
+	// same shape to let a location be cleared.
 	const values: Partial<typeof schema.projects.$inferInsert> = {};
-	if (parsed.data.projectName) values.name = parsed.data.projectName;
-	if (parsed.data.destinationUrl)
+	if (parsed.data.projectName !== undefined)
+		values.name = parsed.data.projectName;
+	if (parsed.data.destinationUrl !== undefined)
 		values.destinationUrl = parsed.data.destinationUrl;
+	// `!== undefined` so that fallbackKey: '' clears the keyword; a truthiness check
+	// would silently ignore that, as it did for qrCodes.location.
+	if (parsed.data.fallbackKey !== undefined)
+		values.fallbackKey = parsed.data.fallbackKey;
 	if (Object.keys(values).length === 0) {
-		return c.json({ error: 'No fields to update' }, 400);
+		return fail(c, 400, ErrorCodes.NO_FIELDS_TO_UPDATE);
 	}
 
 	const db = getDb(c.env.DB);
@@ -183,30 +402,38 @@ projectsApp.put('/:id', async (c) => {
 		.set(values)
 		.where(eq(schema.projects.projectId, projectId));
 	if (result.meta.changes === 0)
-		return c.json({ error: 'Project not found' }, 404);
+		return fail(c, 404, ErrorCodes.PROJECT_NOT_FOUND);
 	return c.json({ message: 'Project updated' });
 });
 
-// DELETE /projects/:id — delete a project (QR codes cascade)
+// DELETE /projects/:id — delete a project (QR codes and their access logs cascade)
 projectsApp.delete('/:id', async (c) => {
-	const user = c.get('user');
-	if (
-		!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_DELETE)
-	) {
-		return c.json({ error: 'TRACKING_LINK_DELETE permission required' }, 403);
-	}
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_DELETE,
+		'TRACKING_LINK_DELETE',
+	);
+	if (denied) return denied;
+
 	const projectId = c.req.param('id');
 	const db = getDb(c.env.DB);
 	const result = await db
 		.delete(schema.projects)
 		.where(eq(schema.projects.projectId, projectId));
 	if (result.meta.changes === 0)
-		return c.json({ error: 'Project not found' }, 404);
+		return fail(c, 404, ErrorCodes.PROJECT_NOT_FOUND);
 	return c.json({ message: 'Project deleted' });
 });
 
 // GET /projects/:id/qrcodes — paginated QR codes for a project
 projectsApp.get('/:id/qrcodes', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_VIEW,
+		'TRACKING_LINK_VIEW',
+	);
+	if (denied) return denied;
+
 	const projectId = c.req.param('id');
 	const { limit, offset } = parsePagination(c.req.query());
 	const db = getDb(c.env.DB);
@@ -215,6 +442,7 @@ projectsApp.get('/:id/qrcodes', async (c) => {
 			.select()
 			.from(schema.qrCodes)
 			.where(eq(schema.qrCodes.projectId, projectId))
+			.orderBy(desc(schema.qrCodes.createdAt), desc(schema.qrCodes.id))
 			.limit(limit)
 			.offset(offset)
 			.all(),
@@ -228,22 +456,33 @@ projectsApp.get('/:id/qrcodes', async (c) => {
 
 // GET /projects/:id/access-logs — paginated, newest-first raw access log
 projectsApp.get('/:id/access-logs', async (c) => {
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_ANALYTICS,
+		'TRACKING_LINK_ANALYTICS',
+	);
+	if (denied) return denied;
+
 	const projectId = c.req.param('id');
 	const { limit, offset } = parsePagination(c.req.query());
 	const db = getDb(c.env.DB);
 	const [logs, totalRows] = await Promise.all([
 		db
 			.select({
+				id: schema.accessLogs.id,
 				qrId: schema.accessLogs.qrId,
 				projectId: schema.accessLogs.projectId,
 				accessedAt: schema.accessLogs.accessedAt,
 				ipAddress: schema.accessLogs.ipAddress,
+				isBot: schema.accessLogs.isBot,
 				location: schema.qrCodes.location,
 			})
 			.from(schema.accessLogs)
 			.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
 			.where(eq(schema.accessLogs.projectId, projectId))
-			.orderBy(desc(schema.accessLogs.accessedAt))
+			// accessed_at is not unique — two scans can land in the same
+			// millisecond — so id breaks the tie and keeps paging stable.
+			.orderBy(desc(schema.accessLogs.accessedAt), desc(schema.accessLogs.id))
 			.limit(limit)
 			.offset(offset)
 			.all(),
@@ -258,46 +497,237 @@ projectsApp.get('/:id/access-logs', async (c) => {
 	});
 });
 
-// GET /projects/:id/access-logs/csv — full access log as a CSV download.
-// Gated by CSV_EXPORT_ENABLED so it can be shipped disabled and turned on later.
+// Default ceiling on one export. The old implementation loaded every row and
+// built a single string in memory: at 100k rows that blows the Workers Free 10ms
+// CPU budget (error 1102) and approaches the 128MB isolate limit, so one click on
+// a busy project could take the Worker down.
+//
+// Overridable via the CSV_MAX_ROWS var so the limit can be raised or lowered from
+// the dashboard without a deploy. If you raise it, raise CSV_PAGE_SIZE too — the
+// two are tied to the subrequest budget below.
+const DEFAULT_MAX_CSV_ROWS = 50_000;
+// Rows per D1 query while streaming. One query is one subrequest, so the cap
+// above costs at most 25 — half of the Workers Free ceiling of 50, leaving room
+// for the count and project lookups. Raise both together or not at all.
+const CSV_PAGE_SIZE = 2_000;
+
+/**
+ * Reads a boolean-ish env var.
+ *
+ * Accepts a real boolean as well as the string form, because `vars` in
+ * wrangler.jsonc is JSON: writing `"CSV_EXPORT_ENABLED": true` instead of
+ * `"true"` is an easy mistake, and a strict `=== 'true'` would then silently
+ * keep the feature off with no hint as to why. Anything unrecognised is off.
+ */
+function isFlagEnabled(value: unknown): boolean {
+	return value === true || value === 'true' || value === '1';
+}
+
+const csvQuerySchema = z.object({
+	// Compared as text against the stored ISO-8601 UTC timestamps, which sort
+	// chronologically. A bare date is widened to cover the whole UTC day.
+	from: z.string().min(4).max(40).optional(),
+	to: z.string().min(4).max(40).optional(),
+});
+
+/** Widens a bare `YYYY-MM-DD` to the start or end of that UTC day. */
+function normalizeBound(value: string, edge: 'start' | 'end'): string {
+	if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+	return edge === 'start' ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
+}
+
+// GET /projects/:id/access-logs/csv — access log as a streamed CSV download.
+// Gated by CSV_EXPORT_ENABLED so it can ship disabled and be turned on later.
 projectsApp.get('/:id/access-logs/csv', async (c) => {
-	if (c.env.CSV_EXPORT_ENABLED !== 'true') {
-		return c.json({ error: 'CSV export is not enabled' }, 403);
+	// The README documented ANALYTICS as required here; the check was missing.
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_ANALYTICS,
+		'TRACKING_LINK_ANALYTICS',
+	);
+	if (denied) return denied;
+
+	if (!isFlagEnabled(c.env.CSV_EXPORT_ENABLED)) {
+		return fail(c, 403, ErrorCodes.CSV_EXPORT_DISABLED);
 	}
+
+	const parsedQuery = csvQuerySchema.safeParse(c.req.query());
+	if (!parsedQuery.success) {
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			details: parsedQuery.error.flatten(),
+		});
+	}
+	const from = parsedQuery.data.from
+		? normalizeBound(parsedQuery.data.from, 'start')
+		: undefined;
+	const to = parsedQuery.data.to
+		? normalizeBound(parsedQuery.data.to, 'end')
+		: undefined;
 
 	const projectId = c.req.param('id');
 	const db = getDb(c.env.DB);
-	const logs = await db
-		.select({
-			accessedAt: schema.accessLogs.accessedAt,
-			name: schema.qrCodes.name,
-			medium: schema.qrCodes.medium,
-			location: schema.qrCodes.location,
-			userAgent: schema.accessLogs.userAgent,
-			ipAddress: schema.accessLogs.ipAddress,
-		})
-		.from(schema.accessLogs)
-		.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
-		.where(eq(schema.accessLogs.projectId, projectId))
-		.orderBy(desc(schema.accessLogs.accessedAt))
-		.all();
 
-	const header = ['日時', '名前', '媒体', '場所', 'User Agent', 'IPアドレス'];
-	const rows = logs.map((log) => [
-		log.accessedAt,
-		log.name ?? '',
-		log.medium ?? '',
-		log.location ?? '',
-		log.userAgent ?? '',
-		log.ipAddress ?? '',
+	const rangeFilter = and(
+		eq(schema.accessLogs.projectId, projectId),
+		...(from ? [gte(schema.accessLogs.accessedAt, from)] : []),
+		...(to ? [lte(schema.accessLogs.accessedAt, to)] : []),
+	);
+
+	const [project, countRows] = await Promise.all([
+		db
+			.select({ name: schema.projects.name })
+			.from(schema.projects)
+			.where(eq(schema.projects.projectId, projectId))
+			.get(),
+		db.select({ total: count() }).from(schema.accessLogs).where(rangeFilter),
 	]);
-	const csv = [header, ...rows].map(toCsvRow).join('\r\n');
+	if (!project) return fail(c, 404, ErrorCodes.PROJECT_NOT_FOUND);
 
-	return c.body(`﻿${csv}`, 200, {
-		'Content-Type': 'text/csv; charset=utf-8',
-		'Content-Disposition': `attachment; filename="access-logs-${projectId}.csv"`,
+	const maxRows =
+		Number(c.env.CSV_MAX_ROWS ?? DEFAULT_MAX_CSV_ROWS) || DEFAULT_MAX_CSV_ROWS;
+	const total = countRows[0]?.total ?? 0;
+	if (total > maxRows) {
+		// 413 with the real numbers, so the client can say "narrow the range" and
+		// show how far over the limit the request was — rather than a bare 500 once
+		// the Worker ran out of CPU.
+		return fail(c, 413, ErrorCodes.TOO_MANY_ROWS, {
+			meta: { total, max: maxRows },
+		});
+	}
+
+	const header = [
+		'日時',
+		'名前',
+		'媒体',
+		'場所',
+		'ボット',
+		'User Agent',
+		'IPアドレス',
+	];
+	const encoder = new TextEncoder();
+	// Keyset cursor on (accessed_at, id). OFFSET paging degrades quadratically
+	// over a large table because SQLite has to walk and discard every skipped row;
+	// a cursor turns each page into a bounded index range scan on
+	// idx_access_logs_project_accessed_at.
+	let cursor: { accessedAt: string; id: number } | null = null;
+	let done = false;
+
+	const stream = new ReadableStream<Uint8Array>({
+		start(controller) {
+			// UTF-8 BOM so Excel on Windows detects the encoding, and CRLF per
+			// RFC 4180 — both preserved from the original implementation.
+			controller.enqueue(encoder.encode(`﻿${toCsvRow(header)}\r\n`));
+		},
+		async pull(controller) {
+			if (done) {
+				controller.close();
+				return;
+			}
+			const rows = await db
+				.select({
+					id: schema.accessLogs.id,
+					accessedAt: schema.accessLogs.accessedAt,
+					isBot: schema.accessLogs.isBot,
+					userAgent: schema.accessLogs.userAgent,
+					ipAddress: schema.accessLogs.ipAddress,
+					name: schema.qrCodes.name,
+					medium: schema.qrCodes.medium,
+					location: schema.qrCodes.location,
+				})
+				.from(schema.accessLogs)
+				.leftJoin(schema.qrCodes, eq(schema.accessLogs.qrId, schema.qrCodes.id))
+				.where(
+					cursor
+						? and(
+								rangeFilter,
+								or(
+									lt(schema.accessLogs.accessedAt, cursor.accessedAt),
+									and(
+										eq(schema.accessLogs.accessedAt, cursor.accessedAt),
+										lt(schema.accessLogs.id, cursor.id),
+									),
+								),
+							)
+						: rangeFilter,
+				)
+				.orderBy(desc(schema.accessLogs.accessedAt), desc(schema.accessLogs.id))
+				.limit(CSV_PAGE_SIZE)
+				.all();
+
+			if (rows.length === 0) {
+				controller.close();
+				return;
+			}
+
+			controller.enqueue(
+				encoder.encode(
+					`${rows
+						.map((log) =>
+							toCsvRow([
+								log.accessedAt,
+								log.name ?? '',
+								log.medium ?? '',
+								log.location ?? '',
+								log.isBot ? '1' : '0',
+								log.userAgent ?? '',
+								log.ipAddress ?? '',
+							]),
+						)
+						.join('\r\n')}\r\n`,
+				),
+			);
+
+			const last = rows[rows.length - 1];
+			cursor = { accessedAt: last.accessedAt, id: last.id };
+			if (rows.length < CSV_PAGE_SIZE) done = true;
+		},
+	});
+
+	return new Response(stream, {
+		status: 200,
+		headers: {
+			'Content-Type': 'text/csv; charset=utf-8',
+			'Content-Disposition': contentDisposition(
+				csvFilename(project.name, from, to),
+			),
+			'Cache-Control': 'no-store',
+		},
 	});
 });
+
+/** `アクセスログ_造形大祭2026_2026-07-25.csv`, sanitised for a filesystem. */
+function csvFilename(projectName: string, from?: string, to?: string): string {
+	const safeName =
+		projectName
+			// Characters no filesystem accepts. Japanese is deliberately preserved —
+			// the whole point is that the file is identifiable in a downloads folder.
+			.replace(/[\\/:*?"<>|]/g, '')
+			// Whitespace, including anything exotic, collapses to one underscore.
+			.replace(/\s+/g, '_')
+			.trim()
+			.slice(0, 60) || 'project';
+	const range = [from?.slice(0, 10), to?.slice(0, 10)]
+		.filter(Boolean)
+		.join('_');
+	return `アクセスログ_${safeName}${range ? `_${range}` : ''}.csv`;
+}
+
+/**
+ * Content-Disposition with both an ASCII fallback and an RFC 5987 UTF-8 form.
+ * The old header interpolated a raw UUID, so every download was named
+ * `access-logs-3f2b….csv`.
+ *
+ * The fallback is built by iterating rather than with a regex range so there are
+ * no hex escapes for a formatter to mangle into literal control bytes: anything
+ * outside printable ASCII, plus the quote that would end the header value,
+ * becomes an underscore.
+ */
+function contentDisposition(filename: string): string {
+	const ascii = Array.from(filename)
+		.map((ch) => (ch >= ' ' && ch <= '~' && ch !== '"' ? ch : '_'))
+		.join('');
+	return `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(filename)}`;
+}
 
 // Escapes a row of values per RFC 4180: quote fields containing a comma,
 // quote, or newline, doubling any embedded quotes.
@@ -312,21 +742,24 @@ function toCsvRow(values: (string | null)[]): string {
 
 // POST /projects/:id/qrcodes — create a QR code for a project
 projectsApp.post('/:id/qrcodes', async (c) => {
-	const user = c.get('user');
-	if (!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_EDIT)) {
-		return c.json({ error: 'TRACKING_LINK_EDIT permission required' }, 403);
-	}
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_EDIT,
+		'TRACKING_LINK_EDIT',
+	);
+	if (denied) return denied;
 
+	const user = c.get('user');
 	const projectId = c.req.param('id');
 	const parsed = createQRCodeBodySchema.safeParse({
 		...(await c.req.json().catch(() => ({}))),
 		projectId,
 	});
 	if (!parsed.success) {
-		return c.json(
-			{ error: 'Invalid request body', details: parsed.error.flatten() },
-			400,
-		);
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			fields: Object.keys(parsed.error.flatten().fieldErrors),
+			details: parsed.error.flatten(),
+		});
 	}
 
 	const { name, medium, location } = parsed.data;
@@ -340,50 +773,61 @@ projectsApp.post('/:id/qrcodes', async (c) => {
 			projectId,
 			name,
 			medium,
-			location,
+			location: location ?? '',
 			createdAt,
 			creatorId: user?.sub ?? null,
 		});
 	} catch (error) {
 		if (isUniqueConstraintError(error)) {
-			return c.json(
-				{ error: 'この媒体・場所の組み合わせは既に登録されています' },
-				409,
-			);
+			// One QR code per named item within a project. `fields` lets the web app
+			// mark the offending input rather than making the user guess.
+			return fail(c, 409, ErrorCodes.DUPLICATE_NAME, { fields: ['name'] });
 		}
 		throw error;
 	}
 
 	return c.json(
-		{ id: qrId, projectId, name, medium, location, createdAt },
+		{
+			id: qrId,
+			projectId,
+			name,
+			medium,
+			location: location ?? '',
+			createdAt,
+		},
 		201,
 	);
 });
 
 // PUT /projects/qrcodes/:id — update a QR code's name/medium/location
 projectsApp.put('/qrcodes/:id', async (c) => {
-	const user = c.get('user');
-	if (!hasPermission(user?.permissions ?? 0, Permissions.TRACKING_LINK_EDIT)) {
-		return c.json({ error: 'TRACKING_LINK_EDIT permission required' }, 403);
-	}
+	const denied = denyUnlessPermitted(
+		c,
+		Permissions.TRACKING_LINK_EDIT,
+		'TRACKING_LINK_EDIT',
+	);
+	if (denied) return denied;
 
 	const qrId = c.req.param('id');
 	const parsed = updateQRCodeBodySchema.safeParse(
 		await c.req.json().catch(() => null),
 	);
 	if (!parsed.success) {
-		return c.json(
-			{ error: 'Invalid request body', details: parsed.error.flatten() },
-			400,
-		);
+		return fail(c, 400, ErrorCodes.INVALID_BODY, {
+			fields: Object.keys(parsed.error.flatten().fieldErrors),
+			details: parsed.error.flatten(),
+		});
 	}
 
+	// `!== undefined` so that location: '' clears the location. Truthiness checks
+	// silently ignored it, which made an entered location impossible to remove.
 	const values: Partial<typeof schema.qrCodes.$inferInsert> = {};
-	if (parsed.data.name) values.name = parsed.data.name;
-	if (parsed.data.medium) values.medium = parsed.data.medium;
-	if (parsed.data.location) values.location = parsed.data.location;
+	if (parsed.data.name !== undefined) values.name = parsed.data.name;
+	if (parsed.data.medium !== undefined) values.medium = parsed.data.medium;
+	if (parsed.data.location !== undefined)
+		values.location = parsed.data.location;
 	if (Object.keys(values).length === 0) {
-		return c.json({ error: 'No fields to update' }, 400);
+		return fail(c, 400, ErrorCodes.NO_FIELDS_TO_UPDATE);
 	}
 
 	const db = getDb(c.env.DB);
@@ -393,20 +837,17 @@ projectsApp.put('/qrcodes/:id', async (c) => {
 			.set(values)
 			.where(eq(schema.qrCodes.id, qrId));
 		if (result.meta.changes === 0)
-			return c.json({ error: 'QR code not found' }, 404);
+			return fail(c, 404, ErrorCodes.QR_CODE_NOT_FOUND);
 	} catch (error) {
 		if (isUniqueConstraintError(error)) {
-			return c.json(
-				{ error: 'この媒体・場所の組み合わせは既に登録されています' },
-				409,
-			);
+			return fail(c, 409, ErrorCodes.DUPLICATE_NAME, { fields: ['name'] });
 		}
 		throw error;
 	}
 	return c.json({ message: 'QR code updated', qrId });
 });
 
-// DELETE /projects/qrcodes/:id — delete a QR code (and its access logs)
+// DELETE /projects/qrcodes/:id — delete a QR code (its access logs cascade)
 // TRACKING_LINK_DELETE can delete any QR code; TRACKING_LINK_EDIT only its own.
 projectsApp.delete('/qrcodes/:id', async (c) => {
 	const user = c.get('user');
@@ -421,12 +862,10 @@ projectsApp.delete('/qrcodes/:id', async (c) => {
 	);
 
 	if (!canDeleteAny && !canEdit) {
-		return c.json(
-			{
-				error: 'TRACKING_LINK_EDIT or TRACKING_LINK_DELETE permission required',
-			},
-			403,
-		);
+		return fail(c, 403, ErrorCodes.PERMISSION_REQUIRED, {
+			message: 'TRACKING_LINK_EDIT or TRACKING_LINK_DELETE permission required',
+			meta: { required: 'TRACKING_LINK_EDIT|TRACKING_LINK_DELETE' },
+		});
 	}
 
 	const qrId = c.req.param('id');
@@ -436,12 +875,13 @@ projectsApp.delete('/qrcodes/:id', async (c) => {
 		.from(schema.qrCodes)
 		.where(eq(schema.qrCodes.id, qrId))
 		.get();
-	if (!qr) return c.json({ error: 'QR code not found' }, 404);
+	if (!qr) return fail(c, 404, ErrorCodes.QR_CODE_NOT_FOUND);
 	if (!canDeleteAny && qr.creatorId !== user?.sub) {
-		return c.json({ error: 'You can only delete QR codes you created' }, 403);
+		return fail(c, 403, ErrorCodes.NOT_OWNER);
 	}
 
-	await db.delete(schema.accessLogs).where(eq(schema.accessLogs.qrId, qrId));
+	// Access logs go with it via AccessLogs.qr_id ON DELETE CASCADE (added in
+	// migration 0002), so there is no explicit delete here — one less D1 write.
 	await db.delete(schema.qrCodes).where(eq(schema.qrCodes.id, qrId));
 	return c.json({ message: 'QR code deleted', qrId });
 });

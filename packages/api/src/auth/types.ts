@@ -6,8 +6,63 @@ export interface Bindings {
 	ADMIN_PASSWORD: string;
 	/** Comma-separated list of origins allowed to call this API from a browser. */
 	ALLOWED_ORIGINS?: string;
-	/** Set to "true" to enable the CSV export endpoint. Defaults to disabled. */
-	CSV_EXPORT_ENABLED?: string;
+	/**
+	 * Set to "true" to enable the CSV export endpoint. Defaults to disabled.
+	 * A real JSON boolean is accepted too — `vars` in wrangler.jsonc is JSON, so
+	 * `true` without quotes is an easy slip and should not silently do nothing.
+	 */
+	CSV_EXPORT_ENABLED?: string | boolean;
+	/**
+	 * Maximum rows one CSV export may contain before it returns 413 and asks the
+	 * caller to narrow the date range. Defaults to 50,000, which costs 25 of the
+	 * Workers Free 50-subrequest budget at the streaming page size.
+	 */
+	CSV_MAX_ROWS?: string | number;
+	/**
+	 * How the scan endpoint writes its access log. Defaults to "async", which
+	 * takes the D1 write off the response path via waitUntil. Set to "sync" to
+	 * await it instead — an escape hatch that can be flipped from the Cloudflare
+	 * dashboard, without a deploy, if logged writes ever look like they are being
+	 * dropped during an event.
+	 */
+	LOG_WRITE_MODE?: 'async' | 'sync';
+	/**
+	 * Rate limiter guarding POST /auth/login.
+	 *
+	 * Declared by hand because `unsafe` bindings are excluded from
+	 * `wrangler types` generation. Optional so that a deployment without the
+	 * binding still serves logins rather than locking everyone out — the handler
+	 * logs loudly when it is missing instead.
+	 */
+	LOGIN_LIMITER?: RateLimiter;
+	/** Build identifier surfaced by /healthz, for confirming what is deployed. */
+	GIT_SHA?: string;
+	/**
+	 * Where a scan goes when D1 cannot be reached at all — the last resort behind
+	 * FALLBACK_DESTINATIONS. Covers QR codes printed before `&p=` existed, and
+	 * keywords with no configured entry. Unset means answer 503 instead.
+	 */
+	FALLBACK_URL?: string;
+	/**
+	 * Keyword → destination URL, consulted only when the database read fails.
+	 *
+	 * Accepts an object or a JSON string, because `vars` in wrangler.jsonc is JSON
+	 * and which one arrives depends on how the value was quoted. Unusable entries
+	 * are dropped rather than throwing — see src/fallback.ts.
+	 */
+	FALLBACK_DESTINATIONS?: string | Record<string, string>;
+	/**
+	 * Local testing only: makes the scan endpoint's database read throw, so the
+	 * fallback path can actually be exercised (the local D1 is embedded and cannot
+	 * be switched off). Every use is logged as `db_failure_simulated`, so this
+	 * cannot sit unnoticed in a deployed environment.
+	 */
+	SIMULATE_DB_FAILURE?: string;
+}
+
+/** The shape of a Workers Rate Limiting binding (`type: "ratelimit"`). */
+export interface RateLimiter {
+	limit(options: { key: string }): Promise<{ success: boolean }>;
 }
 
 export interface AuthUser {

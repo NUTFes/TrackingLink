@@ -1,0 +1,283 @@
+# 負荷テスト計画とリリース前チェックリスト
+
+NUTFES 本番運用に向けた、TrackingLink の負荷テスト手順とリリース前の確認事項。
+
+対象は 2 つの経路:
+
+- **スキャン経路** — `GET /?id=<qrId>`。ポスターの QR を読んだ人が通る。バースト性が高い。
+- **管理経路** — `GET /projects` などの管理 API と CSV 出力。件数が増えると劣化する。
+
+---
+
+## 1. 前提: Cloudflare Workers Free プランの上限
+
+本番は Free プランで運用する。**この算術がこのドキュメントで最も重要**で、イベント中にコードを出しても直せない唯一の制約。
+
+| 項目 | Free プランの上限 |
+|---|---|
+| リクエスト | 100,000 / 日 |
+| **CPU 時間** | **10 ms / リクエスト** |
+| **D1 書き込み行数** | **100,000 行 / 日** |
+| D1 読み取り行数 | 5,000,000 行 / 日 |
+| サブリクエスト(D1 呼び出しを含む) | 50 件 / リクエスト |
+| D1 データベースサイズ | 500 MB / DB |
+
+**スキャン 1 回のコスト = D1 書き込み 1 行 + 読み取り 2 行。**
+→ 書き込みが実質の天井で、**1 日あたり最大 10 万スキャン**。
+
+クォータのリセットは **00:00 UTC = 09:00 JST**。
+
+想定イベント規模(数千〜2 万スキャン)には十分な余裕がある。ただし:
+
+- **CPU 10 ms は CSV 出力と `GET /projects` の集計で実際に超える。** これはスループットの集計値には現れず、**リクエスト単位の CPU 時間**として Workers Logs に出る(超過時はエラー 1102)。
+- **D1 は `DELETE` した行も「rows written」に計上される。** 負荷テストの後片付けそれ自体がクォータを食う(§5.3 参照)。
+
+もし Paid プラン($5/月)に移る場合、CPU 上限・書き込み上限・サブリクエスト上限・リクエスト上限がまとめて緩む。本ドキュメントは Free 前提で書かれている。
+
+---
+
+## 2. 読み違えやすい点
+
+負荷テストの結果を解釈する前に必ず読むこと。
+
+1. **1 台の PC からは自分の上り帯域を測っているだけ。** Cloudflare は 1 台では飽和させられないエッジで受け止める。「500 rps 捌けた」を成果として引用してはいけない。
+2. **見るべきは集計値ではなくリクエスト単位の指標。** Worker の **CPU 時間**(Free は 10 ms 上限)と **D1 の rows read / rows written per request**。CPU と読み取り行数が半分になれば本物の改善、ノート PC の RPS が上がっただけなら NIC が温まっただけ。
+3. **エラー率を信じる前に Cloudflare ダッシュボードの Security → Events を見る。** 単一 IP から `*.workers.dev` を叩くと Cloudflare 自身の濫用対策で 429 / 1015 が返り、**アプリの障害に見える**。
+4. **Cloudflare は大規模なストレステストについて事前連絡を求めている。** 1 台から数千リクエストはその水準には遠いが、分散クラウド負荷生成を本番ホスト名に向けないこと。
+5. **`*.workers.dev` では Cache API と `Cache-Control` が効かない。** キャッシュのベンチマークを workers.dev に対して回しても何も測れない。独自ドメインに移行するまでキャッシュ戦略は Worker 内メモリのみ。
+6. **D1 は 1 データベースあたり単一ライター(SQLite)。** `AccessLogs` は単一テーブルなので、**アクセスを複数プロジェクトに分散させても書き込み競合は緩和しない**。期待してはいけない。
+
+---
+
+## 3. ツールと配置
+
+**k6 を使う。** Windows なら `winget install k6`(または `scoop install k6` / `choco install k6`)の 1 コマンドで、単一 Go バイナリが入る。
+
+k6 を選ぶ理由:
+
+1. **`ramping-arrival-rate` によるオープンモデル負荷。** QR スキャンは「サーバが遅くなっても人は同じ頻度でスキャンする」到着率の現象であって、同時接続数の現象ではない。`-c N` 系のクローズドモデルツール(autocannon など)は Worker が遅くなると勝手に自己抑制し、**まさに探している劣化を隠す**。
+2. **`redirects: 0`。** スキャン経路はリダイレクトを返すので、リダイレクトを追跡するツールは遷移先(Instagram など)を測ってしまう。
+3. **`thresholds` で終了コードが立つ。** CI ゲートにできる。
+4. **負荷生成が Go。** Node 製ツールはノート PC で測定対象と CPU を奪い合う。
+
+k6 バイナリが用意できない人向けに autocannon のスモークだけ残してあるが、計画の土台にはしない。
+
+### ディレクトリ
+
+```
+packages/api/loadtest/
+  README.md              # §2 の「読み違えやすい点」を冒頭に転記
+  seed/generate.mjs      # SQL + qrids.csv を生成
+  seed/run.mjs           # wrangler を child_process で叩く Node ドライバ
+  k6/lib/config.js       # BASE_URL / 共通しきい値 / SharedArray(qrIds)
+  k6/scan-sustained.js       # S1
+  k6/scan-spike.js           # S2
+  k6/admin-projects.js       # S3
+  k6/csv-export.js           # S4
+  k6/login-bruteforce.js     # S5
+  k6/smoke.js                # S6 (CI ゲート)
+  k6/scan-ramping-prod.js    # P1
+  autocannon/smoke.mjs
+```
+
+`packages/api/` 配下に置くのは、`wrangler` と `schema.sql` への相対パスで完結するため。トップレベルに置くとワークスペースパッケージ化したくなるが、利点がない。
+
+### Windows での規律
+
+オーケストレーションはすべて `run.mjs` の `child_process` 内で行う。npm script のシェル連結(`&&`、`$(...)`、単一引用符で囲んだ JSON)は Windows で壊れる。
+
+### npm スクリプト
+
+```
+loadtest:seed:local   node loadtest/seed/run.mjs --target=local --logs=500000
+loadtest:scan         k6 run loadtest/k6/scan-sustained.js
+loadtest:spike        k6 run loadtest/k6/scan-spike.js
+loadtest:admin        k6 run loadtest/k6/admin-projects.js
+loadtest:csv          k6 run loadtest/k6/csv-export.js
+loadtest:login        k6 run loadtest/k6/login-bruteforce.js
+loadtest:smoke        k6 run loadtest/k6/smoke.js
+loadtest:prod:ramp    k6 run loadtest/k6/scan-ramping-prod.js
+```
+
+---
+
+## 4. シードデータ
+
+### 4.1 ローカル(大量)
+
+`generate.mjs` が `.sql` を吐き、`wrangler d1 execute --local --file=` で流す。D1 の制約への対処:
+
+- **バインドパラメータは 1 クエリ約 100 件が上限** → プレースホルダを使わず**リテラル値**を出力して回避する。
+- **1 文の SQL サイズ上限** → `INSERT ... VALUES (...),(...)` を **500 行 / 文**にする。50 万行 = 1,000 文を約 10 ファイルに分割。
+- **`BEGIN` / `COMMIT` は D1 API では使えない** → 明示トランザクションを出力しない。速度を買うのは「文を大きくすること」であってトランザクションではない。
+- **Free は 1 DB 500 MB** → 50 万行 ≈ 100 MB + インデックス。収まるが同じオーダーなので、ローカルで 500 万行入れて本番で驚かないこと。
+
+**ローカル D1 に流すときの実測済みの落とし穴**(どちらも `run.mjs` が吸収する):
+
+- **`wrangler dev` を止めてからシードする。** 起動中にローカル D1 へ書き込むと workerd が
+  `kj/table.c++:57: HashIndex detected hash table inconsistency` を吐いて失敗する。
+- **1 ファイルあたりの文数を抑える。** 500 行/文 × 92 文(約 4 MB)を 1 ファイルで流すと、
+  サーバーを止めていても同じ workerd エラーで失敗した。**10〜20 文ずつのファイルに分割して
+  順に流す**。`run.mjs` は分割と、失敗時にどのファイルまで進んだかの出力(再開可能にするため)
+  を担当する。
+
+### 4.2 データを一様乱数にしない
+
+一様乱数データはインデックスの選択性を過大評価させ、p95 が実際より良く見える。以下の偏りを付ける。
+
+- **Zipf 的な偏り** — 1 プロジェクトに全スキャンの約 60%、その中の 1 QR に約 30%。
+- **`accessed_at`** — 3 日間に日内変動 + 10 分の急峻なスパイク 1 回(ステージ告知の再現)。複合インデックス `(project_id, accessed_at)` が範囲走査する対象。
+- **User Agent** — 実物のプールから引く。
+  - 実ユーザー: iOS Safari / Android Chrome / **`Line/14.x`(LINE アプリ内ブラウザ)**
+  - ボット: `facebookexternalhit/1.1;line-poker/0.1` / `Twitterbot/1.0` / `Slackbot-LinkExpanding`
+  - **同じプールでボット判定(`classifyUserAgent`)をアサートする。** `Line/` を誤ってボット扱いすると最大の実トラフィックを消すので、ここは必ずテストする。
+- **IP** — 学内 /16 + キャリアレンジ、**繰り返しあり**(実スキャンは端末ごとに繰り返す)。
+
+### 4.3 複数プロジェクトへの分散はなぜ必要か
+
+経路によって効き方が違う。
+
+**スキャン経路** — プロジェクト数はリダイレクト自体(主キー参照)には影響しない。効くのは 2 点:
+
+- Worker 内メモリキャッシュのヒット率。**単一 QR ID を叩き続けると非現実的に良い数字が出る**ので、必ず Zipf 重みで分散させる。
+- 逆に、**D1 の書き込み競合は分散しても減らない**(§2-6)。
+
+**管理経路** — ここが本命。**`PAGE_SIZE = 10` を超えるプロジェクト数(ローカルは 25 件)がないと、`ORDER BY` 欠落によるページング重複/欠落バグも、集計をページ内に絞る修正の効果も観測できない。**
+
+**ユニーク制約の確認** — 同じ名前が別プロジェクトでは作れること(意図した挙動)、および場所が空の QR を複数作れることを確認する。
+
+### 4.4 本番(少量)
+
+管理 API 経由で **5 プロジェクト × 各 10〜50 QR** を作る。11 件以上にして、管理画面のページングを実 D1 レイテンシで確認する。遷移先は `https://example.com/...` にしておく。
+
+---
+
+## 5. シナリオ
+
+想定実ピークは数百スキャン/分(約 5 rps)、最悪でも 50 rps × 30 秒程度。以下の目標は概ねその 10 倍なので、通れば実質的な余裕がある。
+
+### 5.1 ローカルで回すもの
+
+| # | シナリオ | 形 | データ | 合否基準 |
+|---|---|---|---|---|
+| **S1** | スキャン持続 | `constant-arrival-rate` 50 rps × 5 分(15,000 件)、qrId は Zipf 重み、`redirects: 0` | 50 万ログ | 失敗率 < 0.1% / 全レスポンスが 302 / p95 < 50 ms / **CPU p95 < 8 ms**(10 ms 上限へのマージン)/ D1 書き込み数 = リクエスト数 ±0.1% |
+| **S2** | **スキャンスパイク** | `ramping-arrival-rate` 5 → **500 rps** を 30 秒でランプ、60 秒維持、降下 | 50 万ログ | 5xx ゼロ / 失敗率 < 0.5% / p99 < 1 秒 / **`SQLITE_BUSY`・`database is locked`・D1 書き込み競合エラーがゼロ** |
+| **S3** | 管理ダッシュボード | `GET /projects?page=1&limit=10` を 5 VU × 1 分 + コールド 1 発、`page=3` でも同様 | **50 万ログ / 25 プロジェクト** | p95 < 200 ms / CPU < 8 ms / **リクエストあたり `rows_read` < 5,000** / page 1→3 で projectId が重複せず欠落しない |
+| **S4** | CSV 出力 | 1 VU 逐次 3 回、1 万行 / 5 万行 / 上限超え | 5 万 / 10 万 | 200 / **TTFB < 2 秒で行数にほぼ依存しない** / エラー 1102 なし / メモリ超過なし / 上限超えは 500 ではなく **413 + 実件数** |
+| **S5** | ログイン総当たり | 誤パスワードで 20 rps × 30 秒 | 任意 | 90% 以上が 429 / 別キーでの正パスワードログインは成功する |
+| **S6** | スモーク・回帰(**CI ゲート**) | 1 VU で全エンドポイント 1 周 | 200 ログ | §5.4 参照 |
+
+**S2 がこの計画で最も価値が高い。** D1 は単一ライターなので、**500 並列 INSERT が優雅に直列化するのか、エラーを吐き始めるのかを答える唯一のシナリオ**。他のどのシナリオもこの問いには答えない。書き込み 3 万件は Free の日次クォータの 30% を消費するため、**必ずローカルのみで回す**。
+
+**S1・S3 は修正前のベースラインを先に記録する。** 悪い数字がそのまま before/after の証拠になる。特に S3 の `rows_read` は本当のアサーションで、レイテンシだけ見ていると温まったページキャッシュが全件走査を隠す。
+
+### 5.2 本番で回すもの(合計約 14,000 リクエスト)
+
+| # | 形 | 件数 | 目的 |
+|---|---|---|---|
+| **P1** | `ramping-arrival-rate` **5 → 200 rps を 60 秒でランプ、60 秒維持**、qrId は 5 プロジェクトに Zipf 分散、`redirects: 0` | 約 9,000 | 実 D1 レイテンシでの**劣化の境界**と信頼できる p95/p99 分布。段階的に上げるので「どこで壊れるか」が分かる(ステップ関数は「どこかで壊れた」しか言わない) |
+| **P2** | soak 約 0.5 rps × 2〜3 時間 | 約 5,000 | ログ書き込みが**リクエスト数と 1:1 で着地するか**、isolate の安定性、ログが全部届いているか |
+| **P3** | S3 / S4 / S5 を各 1 回 | 約 100 | 実環境の CPU 時間の実測 |
+
+書き込み消費 ≈ 14,100 / 100,000 = **14%**。修正後の再実行が 2 回分残るのが、この数字を選んだ理由。
+
+**避けるべき形**:
+
+- **「同時 5,000 リクエストを 1 発」は測定にならない。** 1 台の PC ではエフェメラルポート・TLS ハンドシェイクの CPU・上り帯域が先に詰まるので、測っているのは Worker ではなく自分の PC。さらに単一 IP からの 5,000 同時は Cloudflare 自身の濫用対策に引っかかり、429/1015 を「アプリが落ちた」と誤読することになる。サンプル 1 個なので p95/p99 も信頼できない。
+- **2 万リクエストを 2〜3 時間(約 2 rps)は soak であって負荷テストではない。** 2 rps で競合は絶対に出ない。5,000 件と同じ情報しか買えないので、差額のクォータを捨てているだけ。
+
+### 5.3 本番実行の手順
+
+1. 実行前に Cloudflare ダッシュボードで **D1 の当日 rows written** を確認(0 に近いこと)。リセットは 09:00 JST。
+2. P1 の直前にバックアップ: `wrangler d1 export trackinglink-db --remote --output=backup-YYYYMMDD.sql`
+3. 実行中に見るもの:
+   - Workers → Metrics: **5xx** と **CPU 時間 p99**
+   - Workers → Logs: `access_log_insert_failed` / `Unhandled error` / エラーコード 1101(uncaught throw)・1102(CPU 超過)・1015(レート制限)
+   - Security → Events: Cloudflare 自身のブロックと自分の障害を区別する
+4. **後片付け** — **D1 は `DELETE` した行も rows written に計上する。** 14,000 行を消すとさらに 14,000 書き込みで合計 28% になる。
+   - **推奨**: リリース前にどうせ本番を空にするなら、`wrangler d1 delete trackinglink-db` → `wrangler d1 create trackinglink-db` → `schema.sql` と移行を流し直すのが**書き込みゼロ**で済む。`database_id` が変わるので `wrangler.jsonc` の更新を忘れないこと。
+   - 行単位で消すなら、**テストと別日**にしてクォータを分ける。
+
+### 5.4 S6(CI ゲート)のアサーション
+
+CI には **S6 のみ**を `smoke` ジョブとして追加する。**これがこのリポジトリ初の自動テストになる**のが導入の本当の理由。
+
+手順: `schema.sql --local` を適用 → 200 行シード → `wrangler dev --local --port 8789` をバックグラウンド起動 → `/healthz` を待つ → `k6 run smoke.js` → kill。
+
+挙動のアサーション:
+
+- スキャンが **302** を返し、`Cache-Control: no-store` が付いている
+- 不明な `id` は 404
+- ボット UA は 200 の HTML(OG メタ)
+- **`Line/` UA は実ユーザーとして `is_bot = 0` で記録される**
+- ページングが安定(重複・欠落なし)
+- `ANALYTICS` 権限なしの CSV は 403
+- `/healthz` が 200
+
+しきい値は緩め(p95 < 500 ms)にして、**数値ではなく挙動**をゲートする。
+
+**S1〜S5 は CI に入れない。** 共有ランナーでは安定した負荷数値が出ず、1 ヶ月でジョブを無効化することになる。
+
+---
+
+## 6. リリース前チェックリスト
+
+### 6.1 リリースブロッカー
+
+- [ ] **ヘルスチェック** — `/healthz`(`{ok, version}`)と `/readyz`(`SELECT 1`、失敗で 503)。`GET /` は `?id=` なしで 404 を返すので**ヘルスチェック先には使えない**。無料の外部監視(UptimeRobot)を `/healthz` に 1〜5 分間隔で向ける。`/readyz` を 1 分間隔で叩いても約 1,440 読み取り/日で無視できる。
+- [ ] **`ALLOWED_ORIGINS`** — 自ホストの Web ドメインを追加する。オリジンは scheme 込み・末尾スラッシュなし・`www` の有無は別オリジン。**加えて fail-open を直す**: `index.ts` の `allowed.length > 0 ? allowed : '*'` は、変数の設定漏れやタイポが**無言で `Authorization` 許可のワイルドカード CORS になる**。設定ミスが目立つよう fail-closed にする。
+- [ ] **`CSV_EXPORT_ENABLED`** — `"false"` のままリリースする。ストリーミング化・件数上限・期間指定・`ANALYTICS` 権限チェックがすべて入り、S4 が通ってから `"true"` にする。フラグを立てるのは 1 行コミットで自動デプロイされるので、無効のまま出すコストはゼロ。
+- [ ] **セッション TTL** — `auth/local.ts` の `SESSION_TTL_SECONDS` を 24 時間 → **8 時間**(1 イベント日)に短縮。
+- [ ] **遷移先 URL のプロトコル制限** — zod の `.string().url()` は `javascript:` や `data:` も通す。その値は Worker が 302 でリダイレクトし管理 UI がリンクとして描画するため、**保存型 XSS / オープンリダイレクト**になる。`http:` / `https:` のみに制限する。
+- [ ] **セキュリティヘッダ** — `dist/` を配る静的サーバに `Content-Security-Policy` / `X-Content-Type-Options: nosniff` / `X-Frame-Options: DENY`。管理 UI は他に何もホストしていないドメインで配る。
+- [ ] **構造化ログ** — 裸の `console.error` を 1 行 JSON(`{event, qrId, projectId, status, durMs, ray}`)に置き換える。`observability.enabled` は既に `true` なので Workers Logs が索引化し、`access_log_insert_failed` が「干し草の中の針」ではなく実際のメトリクスになる。
+- [ ] **バックアップ** — リリース前・破壊的な移行の前・各イベント日の後に `wrangler d1 export`。マシン外に保存する。
+- [ ] **ロールバック手順を書いて 1 度リハーサルする**(§6.3)。
+
+### 6.2 判断が必要な事項
+
+- [ ] **プライバシー** — 生 IP をスキャンごとに保存し CSV にも出している。学祭・個人情報保護法の観点で **/24 に丸めるか salt 付きハッシュ**にするか判断する。DB と CSV も小さくなる。1 行の変更なので「既定のまま」ではなく明示的な判断として記録する。
+- [ ] **独自ドメイン** — `wrangler.jsonc` にコメントアウト済みの `routes` がある。移行すると Cache API・WAF レート制限ルール・同一サイト Cookie が使えるようになる。**QR に焼き込む URL が変わるので、やるならポスター印刷前が唯一のタイミング。** 見送る場合は「`*.workers.dev` サブドメインを将来も保持できる」前提を受け入れることになる。
+- [ ] **トークン保存先** — 24 時間(→8 時間)の全権限 JWT が `localStorage` にあり、XSS で読める。Web が自ホスト・API が `workers.dev` でクロスサイトなので、Cookie 化には `SameSite=None; Secure` + `credentials: 'include'` + 厳密な CORS が必要で、防げる範囲に対して割に合わない。学祭後に、Web と API を同一の独自ドメインに載せるのとセットで再検討する。
+
+### 6.3 ロールバック
+
+**19:00 の学祭当日に `wrangler` のフラグを学ぶことにならないよう、事前に 1 度練習する。**
+
+- **コード** — 本番は `main` への push で Workers Builds が走るので、`git revert` はビルド 1 周分(数分)かかる。速い経路は**ダッシュボードの「Rollback」**、または `wrangler deployments list` / `wrangler rollback`。**1 度練習しておく。**
+- **データ** — D1 Time Travel が 30 日の PITR を提供する。
+  ```
+  wrangler d1 time-travel info    trackinglink-db
+  wrangler d1 time-travel restore trackinglink-db --timestamp=<ISO>
+  ```
+  **データベース全体を巻き戻す破壊的操作**なので、少なくとも `info` を 1 度読んでおくこと。`--remote` の export は読み取りクォータを消費する。
+- **ブレークグラス** — ポスターが出回った後に Worker が壊れたら、**無条件に学祭トップへ 302 する 5 行の Worker** が 500 を返し続けるより圧倒的にまし。**今のうちに書いて手元に置く。**
+  ```ts
+  // <FESTIVAL_TOP_URL> は実際の学祭トップに差し替えてから保管する
+  export default {
+    fetch: () => Response.redirect('<FESTIVAL_TOP_URL>', 302),
+  };
+  ```
+- **移行のリスク** — `AccessLogs` の外部キー追加はテーブル再作成(create → copy → drop → rename)を伴い、唯一戻しにくい手順。**export を先に取り、実データが無いうちに流す。**
+
+### 6.4 イベント当日に監視するもの
+
+1. **D1 → Metrics の当日 rows written vs 100,000 の上限。** — **アラームすべき唯一の数字。** 「上限の 60% を超えたら即 Paid プランにする」を事前合意しておく。
+2. Workers → Metrics: リクエスト/秒、**5xx**、CPU 時間 p50 / p99。
+3. Workers → Logs: `access_log_insert_failed` / `Unhandled error` / 1101 / 1102 / 1015。
+4. D1: データベースサイズ vs Free の 500 MB。
+5. **数時間ごとに自分で実物のポスターをスキャンする。** 「印刷された QR が間違ったホストを指している」はどのダッシュボードにも出ない。
+
+---
+
+## 7. 参考: 将来のシール印刷ビューに向けた設計メモ
+
+今回のリリースでは一括印刷(シール印刷)は実装せず、物ごとに QR を 1 つ生成して単体でダウンロードする運用。将来一括印刷を作るときのために、調査済みの要点を残す。
+
+- **専用ルート `/links/:id/print`** を `ProtectedRoute` の中・`AppLayout` の外に置く。サイドバーとトップバーが印刷時の DOM に存在しなくなる。`?ids=a,b,c` を受ける形にすれば、選択印刷は純粋な追加で足せる(URL 長のため 40 件程度で上限、超過/不在なら全件フォールバック)。
+- **QR は同期計算のインライン SVG で描く。** `qrcode` の `QRCodeLib.create(text)` は**同期**でモジュール行列を返すので、印刷ページに非同期 QR 状態が一切不要になる(20 個の Promise 調整もローディングプレースホルダも `useEffect` の競合もない)。ベクターなのでプリンタの DPI に依らず綺麗。
+- **モジュールは CSS 背景ではなく SVG `<path fill>` で描く。** Chrome の印刷ダイアログでデフォルト ON の「背景のグラフィック」を OFF にしても消えない。`background-image` 方式だとここで無言で白紙になる。
+- `QRCodeLib.toString({type: 'svg'})` + `dangerouslySetInnerHTML` は避ける。Biome の `security/noDangerouslySetInnerHtml` が有効なので抑制コメントが必要になる。`a11y/noSvgWithoutTitle` も有効なので `<title>` を実際に入れる。
+- カードには **name / 媒体 / 場所のキャプション**を必ず入れる。`break-inside: avoid` でカードがページ境界で割れないようにする。サイズは A4 あたり 2 / 6 / 12 の 3 段階。
+- **`modules.get(row, col)` の引数順を取り違えるとシンボルが鏡像になって読めない。** これは画面では分からないので、**A4 を 1 枚実際に印刷して全コードをスマホでスキャンする**のが唯一の検証手段。
+- Safari は `break-inside: avoid` のサポートが最も弱いので、Mac 利用の可能性があれば Safari でも PDF を確認する。
