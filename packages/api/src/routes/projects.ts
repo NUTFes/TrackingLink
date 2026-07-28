@@ -139,6 +139,40 @@ function denyUnlessPermitted(
 
 const projectsApp = new Hono<HonoEnv>();
 
+/**
+ * Scan counts for the QR codes on one page, as `{ [qrId]: count }`.
+ *
+ * Scoped to the ids being rendered, never the whole table — the same rule the
+ * project list follows. It costs one query backed by idx_access_logs_qr_id, and
+ * the rows it scans are only those belonging to the visible codes.
+ *
+ * ## Why this is counted rather than stored
+ *
+ * A `QRCodes.scan_count` column incremented on every redirect would make this
+ * free to display, but it would add a second D1 write per scan. On the Free plan
+ * writes are the binding limit (100k/day) while reads are not (5M/day) — so
+ * caching the count in a column would halve the number of scans the event can
+ * record in order to save a resource there is 50x more of. Wrong direction.
+ *
+ * Cost, for the record: reads scale with (logs belonging to the visible codes) x
+ * (page views). At 20k logs all belonging to one page that is 20k rows per view,
+ * i.e. ~250 views/day against the quota — fine for an admin screen, and the
+ * reason this is not wired to a poll or a keystroke.
+ */
+async function scanCountsByQrId(
+	db: ReturnType<typeof getDb>,
+	qrIds: string[],
+): Promise<Record<string, number>> {
+	if (qrIds.length === 0) return {};
+	const rows = await db
+		.select({ qrId: schema.accessLogs.qrId, scanCount: count() })
+		.from(schema.accessLogs)
+		.where(inArray(schema.accessLogs.qrId, qrIds))
+		.groupBy(schema.accessLogs.qrId)
+		.all();
+	return Object.fromEntries(rows.map((row) => [row.qrId, row.scanCount]));
+}
+
 // GET /projects/qrcodes — paginated QR codes across every project
 projectsApp.get('/qrcodes', async (c) => {
 	const denied = denyUnlessPermitted(
@@ -160,7 +194,17 @@ projectsApp.get('/qrcodes', async (c) => {
 			.all(),
 		db.select({ total: count() }).from(schema.qrCodes),
 	]);
-	return c.json({ data: qrCodes, total: totalRows[0]?.total ?? 0 });
+	const scanCounts = await scanCountsByQrId(
+		db,
+		qrCodes.map((qr) => qr.id),
+	);
+	return c.json({
+		data: qrCodes.map((qr) => ({
+			...qr,
+			scanCount: scanCounts[qr.id] ?? 0,
+		})),
+		total: totalRows[0]?.total ?? 0,
+	});
 });
 
 // GET /projects/qrcodes/:id — a single QR code
@@ -458,7 +502,17 @@ projectsApp.get('/:id/qrcodes', async (c) => {
 			.from(schema.qrCodes)
 			.where(eq(schema.qrCodes.projectId, projectId)),
 	]);
-	return c.json({ data: qrCodes, total: totalRows[0]?.total ?? 0 });
+	const scanCounts = await scanCountsByQrId(
+		db,
+		qrCodes.map((qr) => qr.id),
+	);
+	return c.json({
+		data: qrCodes.map((qr) => ({
+			...qr,
+			scanCount: scanCounts[qr.id] ?? 0,
+		})),
+		total: totalRows[0]?.total ?? 0,
+	});
 });
 
 // GET /projects/:id/access-logs — paginated, newest-first raw access log

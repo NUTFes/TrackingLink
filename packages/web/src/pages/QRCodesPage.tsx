@@ -60,6 +60,8 @@ interface QRCodeRecord {
 	location: string;
 	createdAt: string;
 	creatorId?: string | null;
+	/** Scans recorded for this code. Absent on responses from an older API. */
+	scanCount?: number;
 }
 
 interface Project {
@@ -627,9 +629,24 @@ function QRCodesContent() {
 										fallbackKey={effectiveFallbackKey}
 									/>
 									<div className="min-w-0 flex-1">
-										<p className="break-words text-sm font-medium leading-snug">
-											{qr.name}
-										</p>
+										<div className="flex items-start justify-between gap-2">
+											<p className="break-words text-sm font-medium leading-snug">
+												{qr.name}
+											</p>
+											{/* The count is the reason to open this screen during an
+											    event, so it sits on the same line as the name rather
+											    than in the metadata row below. */}
+											{qr.scanCount !== undefined ? (
+												<span
+													className="shrink-0 whitespace-nowrap rounded-full bg-muted px-2 py-0.5 text-xs font-medium tabular-nums"
+													title={t('qrCodes.scanCountTitle')}
+												>
+													{t('qrCodes.scanCount', {
+														count: qr.scanCount.toLocaleString(locale),
+													})}
+												</span>
+											) : null}
+										</div>
 										<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
 											<div className="flex gap-1">
 												<dt>{t('common.medium')}:</dt>

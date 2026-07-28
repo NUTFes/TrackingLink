@@ -170,6 +170,8 @@ const en: Dictionary = {
 	'qrCodes.scanUrlLabel': 'This code links to',
 	'qrCodes.generateFailed': 'Failed to generate the QR code',
 	'qrCodes.downloadButton': 'Download PNG',
+	'qrCodes.scanCount': '{count} scans',
+	'qrCodes.scanCountTitle': 'Scans recorded for this code',
 	'qrCodes.captionLegend': 'Text printed under the code',
 	'qrCodes.captionHint': 'Printed under the code in the downloaded PNG.',
 	'qrCodes.captionHintNone':
@@ -336,6 +338,8 @@ const ja: Dictionary = {
 	'qrCodes.scanUrlLabel': 'このコードの転送先',
 	'qrCodes.generateFailed': 'QRコードの生成に失敗しました',
 	'qrCodes.downloadButton': 'PNGをダウンロード',
+	'qrCodes.scanCount': '{count} 回',
+	'qrCodes.scanCountTitle': 'このQRコードのアクセス数',
 	'qrCodes.captionLegend': 'QRコードの下に入れる文字',
 	'qrCodes.captionHint': 'ダウンロードするPNGのQRコードの下に印字されます。',
 	'qrCodes.captionHintNone':
