@@ -28,14 +28,19 @@ import { useListQuery } from '../hooks/useListQuery';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
 import { ApiError, assertOk, authFetch } from '../lib/api';
 import { downloadBlob } from '../lib/download';
-import { formatDateTime, slugForFilename } from '../lib/format';
+import { formatDateTime } from '../lib/format';
 import { useTranslation } from '../lib/i18n';
 import {
+	QR_CAPTION_DEFAULTS,
+	type QrCaptionOptions,
 	deriveFallbackKey,
+	qrCaptionLines,
 	qrPngBlob,
+	qrPngFileName,
 	qrPreviewDataUrl,
 	qrTargetUrl,
 } from '../lib/qr';
+import { safeStorage } from '../lib/storage';
 import {
 	btnPrimary,
 	btnRow,
@@ -123,6 +128,53 @@ function QRThumbnail({
 	);
 }
 
+const CAPTION_OPTIONS_KEY = 'tracking-link.qrCaption';
+
+/**
+ * Remembers the caption checkboxes across dialogs.
+ *
+ * QR codes are downloaded one at a time but printed as a batch, so the choice is
+ * made once for a run of twenty and re-ticking two boxes per code would be the
+ * bulk of the work. Persisting only carries a deliberate choice forward — the
+ * first-run state is still QR_CAPTION_DEFAULTS, i.e. no caption.
+ *
+ * safeStorage rather than localStorage: this reads inside a useState initialiser,
+ * and iOS Safari in private browsing throws on the getter itself.
+ */
+function useCaptionOptions(): [
+	QrCaptionOptions,
+	(next: QrCaptionOptions) => void,
+] {
+	const [options, setOptions] = useState<QrCaptionOptions>(() => {
+		const raw = safeStorage.get(CAPTION_OPTIONS_KEY);
+		if (!raw) return QR_CAPTION_DEFAULTS;
+		try {
+			const parsed = JSON.parse(raw) as Partial<QrCaptionOptions>;
+			// Read field by field: anything absent or not a boolean falls back to the
+			// default, so a hand-edited or stale value cannot switch captions on.
+			return {
+				includeName:
+					typeof parsed.includeName === 'boolean'
+						? parsed.includeName
+						: QR_CAPTION_DEFAULTS.includeName,
+				includeMedium:
+					typeof parsed.includeMedium === 'boolean'
+						? parsed.includeMedium
+						: QR_CAPTION_DEFAULTS.includeMedium,
+			};
+		} catch {
+			return QR_CAPTION_DEFAULTS;
+		}
+	});
+
+	const update = useCallback((next: QrCaptionOptions) => {
+		setOptions(next);
+		safeStorage.set(CAPTION_OPTIONS_KEY, JSON.stringify(next));
+	}, []);
+
+	return [options, update];
+}
+
 function QRDialog({
 	qr,
 	fallbackKey,
@@ -140,25 +192,23 @@ function QRDialog({
 	);
 	const { dataUrl, failed } = useQRDataUrl(url);
 	const [isDownloading, setIsDownloading] = useState(false);
+	const [caption, setCaption] = useCaptionOptions();
 
-	const captionLines = [
-		qr.name,
-		[qr.medium, qr.location].filter(Boolean).join(' · '),
-	].filter(Boolean);
+	const captionLines = useMemo(
+		() => qrCaptionLines(qr, caption),
+		[qr, caption],
+	);
 
 	const handleDownload = async () => {
 		setIsDownloading(true);
 		try {
-			// A PNG with the name / medium / location printed underneath, saved via a
-			// blob. Previously this was `<a href={dataUrl} download="qr-<uuid>.png">`:
-			// the file was unidentifiable in a downloads folder, the printed sheet had
-			// no label at all, and on iOS Safari a data: URL tends to navigate in-tab
-			// rather than save — destroying this dialog in the process.
+			// Saved via a blob. Previously this was
+			// `<a href={dataUrl} download="qr-<uuid>.png">`: the file was
+			// unidentifiable in a downloads folder, and on iOS Safari a data: URL
+			// tends to navigate in-tab rather than save — destroying this dialog in
+			// the process.
 			const blob = await qrPngBlob(url, captionLines);
-			downloadBlob(
-				blob,
-				`${slugForFilename(qr.name, qr.medium, qr.location)}.png`,
-			);
+			downloadBlob(blob, qrPngFileName(qr.name));
 		} catch (error) {
 			toast.error(
 				error instanceof Error
@@ -225,6 +275,35 @@ function QRDialog({
 					)}
 				</div>
 
+				<fieldset className="w-full rounded border p-3">
+					<legend className="px-1 text-xs font-medium text-muted-foreground">
+						{t('qrCodes.captionLegend')}
+					</legend>
+					<div className="flex flex-col gap-2">
+						<CaptionToggle
+							checked={caption.includeName}
+							onChange={(includeName) =>
+								setCaption({ ...caption, includeName })
+							}
+							label={t('qrCodes.nameLabel')}
+							sample={qr.name}
+						/>
+						<CaptionToggle
+							checked={caption.includeMedium}
+							onChange={(includeMedium) =>
+								setCaption({ ...caption, includeMedium })
+							}
+							label={t('qrCodes.mediumLabel')}
+							sample={[qr.medium, qr.location].filter(Boolean).join(' · ')}
+						/>
+					</div>
+					<p className="mt-2 text-xs text-muted-foreground">
+						{captionLines.length
+							? t('qrCodes.captionHint')
+							: t('qrCodes.captionHintNone')}
+					</p>
+				</fieldset>
+
 				<div className="w-full">
 					<p className="mb-1 text-xs font-medium text-muted-foreground">
 						{t('qrCodes.scanUrlLabel')}
@@ -235,6 +314,44 @@ function QRDialog({
 				</div>
 			</div>
 		</Modal>
+	);
+}
+
+/**
+ * A caption checkbox that shows the text it would actually print.
+ *
+ * Without the sample the choice is abstract — "Medium" does not tell you that
+ * ticking it also prints the location alongside it. Showing the exact string
+ * means the bundling needs no explaining.
+ */
+function CaptionToggle({
+	checked,
+	onChange,
+	label,
+	sample,
+}: {
+	checked: boolean;
+	onChange: (next: boolean) => void;
+	label: string;
+	sample: string;
+}) {
+	return (
+		<label className="flex cursor-pointer items-start gap-2 text-sm">
+			<input
+				type="checkbox"
+				checked={checked}
+				onChange={(event) => onChange(event.target.checked)}
+				className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-primary"
+			/>
+			<span className="min-w-0">
+				<span className="font-medium">{label}</span>
+				{sample ? (
+					<span className="ml-1 break-words text-muted-foreground">
+						({sample})
+					</span>
+				) : null}
+			</span>
+		</label>
 	);
 }
 

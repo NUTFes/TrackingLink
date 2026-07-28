@@ -1,5 +1,6 @@
 import QRCodeLib from 'qrcode';
 import { TRACKING_LINK_API_URL } from '../config';
+import { slugForFilename } from './format';
 
 /**
  * Base URL that scanned QR codes resolve against. Separate from the API URL
@@ -65,6 +66,23 @@ export function qrTargetUrl(qrId: string, fallbackKey = ''): string {
 	return fallbackKey ? `${base}&p=${encodeURIComponent(fallbackKey)}` : base;
 }
 
+/**
+ * Filename for a downloaded QR code PNG: `<name>_QR.png`.
+ *
+ * Only the name goes in. The medium and location were in here as well, which
+ * buried the one part anyone actually scans a folder for behind two fields that
+ * repeat across most codes.
+ *
+ * Extracted rather than inlined for the same reason as qrTargetUrl: a bulk-print
+ * view will need exactly this, and the two must not drift.
+ */
+export function qrPngFileName(name: string): string {
+	// 'QR' is passed as a part rather than appended, so the separator collapsing
+	// in slugForFilename applies to it too — a blank name gives "QR.png", not
+	// "_QR.png".
+	return `${slugForFilename(name, 'QR')}.png`;
+}
+
 /** On-screen preview. */
 export function qrPreviewDataUrl(text: string): Promise<string> {
 	return QRCodeLib.toDataURL(text, {
@@ -78,6 +96,64 @@ const PNG_QR_SIZE = 640;
 const PNG_PADDING = 32;
 const CAPTION_LINE_HEIGHT = 34;
 const CAPTION_FONT_SIZE = 24;
+
+/** One printed line beneath the QR code. */
+export interface QrCaptionLine {
+	text: string;
+	/** Rendered bold. Reserved for the name — see qrCaptionLines. */
+	emphasis?: boolean;
+}
+
+/** Which of the two required fields get printed under the code. */
+export interface QrCaptionOptions {
+	includeName: boolean;
+	includeMedium: boolean;
+}
+
+/**
+ * Nothing is printed unless asked for.
+ *
+ * A caption is only wanted when the sheet is one of many being sorted by hand;
+ * for a poster that already carries its own design, text under the code is
+ * clutter someone has to crop off. Defaulting to off makes the clean version the
+ * one you get without thinking about it.
+ */
+export const QR_CAPTION_DEFAULTS: QrCaptionOptions = {
+	includeName: false,
+	includeMedium: false,
+};
+
+/**
+ * Builds the caption for a QR code PNG from the two required fields.
+ *
+ * `location` is optional and has no toggle of its own: it qualifies the medium
+ * ("Poster · 1F bulletin board") and shares its line, so it follows the medium's
+ * checkbox. A location with no medium to attach to would read as a stray
+ * fragment on a printed sheet.
+ *
+ * Split out of the dialog so the mapping from checkboxes to printed lines can be
+ * tested without a canvas.
+ */
+export function qrCaptionLines(
+	qr: { name: string; medium: string; location?: string | null },
+	options: QrCaptionOptions,
+): QrCaptionLine[] {
+	const lines: QrCaptionLine[] = [];
+
+	// The name is what someone reads from across a corridor, so it takes the bold
+	// weight — but only ever the name. Emphasis is tied to the field, not to the
+	// position, or a medium-only caption would print in bold and read as a title.
+	if (options.includeName && qr.name) {
+		lines.push({ text: qr.name, emphasis: true });
+	}
+
+	if (options.includeMedium) {
+		const text = [qr.medium, qr.location].filter(Boolean).join(' · ');
+		if (text) lines.push({ text });
+	}
+
+	return lines;
+}
 
 /** Shortens a caption line to fit the image width, with an ellipsis. */
 function fitText(
@@ -100,16 +176,17 @@ function fitText(
 }
 
 /**
- * Renders a QR code to a PNG with its name, medium and location printed beneath.
+ * Renders a QR code to a PNG, optionally with a caption printed beneath.
  *
- * The caption is the point. One QR code is generated per physical item, and the
- * downloaded PNG used to carry no identifying text at all — so once printed,
- * nobody could tell which poster a given sheet belonged to. The filename helps in
- * a folder; only the caption helps on paper.
+ * One QR code is generated per physical item, so on paper the caption is the only
+ * thing that says which item a given sheet belongs to — the filename only helps
+ * while it is still in a folder. It is opt-in nonetheless: see
+ * QR_CAPTION_DEFAULTS. With no lines the output is just the code on white, which
+ * is what a designer placing it into a poster wants.
  */
 export async function qrPngBlob(
 	text: string,
-	captionLines: string[],
+	captionLines: QrCaptionLine[] = [],
 ): Promise<Blob> {
 	const qrCanvas = document.createElement('canvas');
 	await QRCodeLib.toCanvas(qrCanvas, text, {
@@ -118,7 +195,7 @@ export async function qrPngBlob(
 		errorCorrectionLevel: 'H',
 	});
 
-	const lines = captionLines.filter(Boolean);
+	const lines = captionLines.filter((line) => line.text);
 	const canvas = document.createElement('canvas');
 	canvas.width = qrCanvas.width + PNG_PADDING * 2;
 	canvas.height =
@@ -141,11 +218,9 @@ export async function qrPngBlob(
 		ctx.textBaseline = 'top';
 		const maxWidth = canvas.width - PNG_PADDING * 2;
 		let y = qrCanvas.height + PNG_PADDING + PNG_PADDING / 2;
-		for (const [index, line] of lines.entries()) {
-			// First line is the name, and it is what someone reads from across a
-			// corridor — so it gets the bold weight.
-			ctx.font = `${index === 0 ? '600 ' : ''}${CAPTION_FONT_SIZE}px system-ui, sans-serif`;
-			ctx.fillText(fitText(ctx, line, maxWidth), canvas.width / 2, y);
+		for (const line of lines) {
+			ctx.font = `${line.emphasis ? '600 ' : ''}${CAPTION_FONT_SIZE}px system-ui, sans-serif`;
+			ctx.fillText(fitText(ctx, line.text, maxWidth), canvas.width / 2, y);
 			y += CAPTION_LINE_HEIGHT;
 		}
 	}
