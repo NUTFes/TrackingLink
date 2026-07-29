@@ -72,19 +72,30 @@ export function useFieldErrors() {
 }
 
 /**
- * Mirrors the API's fallback-key rule (`^[a-z0-9][a-z0-9_-]*$`).
+ * Mirrors the API's fallback-key rule: the keyword has to be one the Worker was
+ * configured with.
  *
- * ASCII-only is not arbitrary: the keyword is percent-encoded into the printed QR
- * payload, and a Japanese character costs 9 bytes there — enough to grow the
- * symbol from 57x57 to 61x61 modules. Underscore is fine by that measure (it is
- * unreserved in RFC 3986, so it is never percent-encoded) and social handles
- * need it.
- *
- * Keep the hyphen last in the character class — `[a-z0-9-_]` parses `9-_` as a
- * range and would accept uppercase and punctuation.
+ * Which characters it uses is not the question — a perfectly spelled keyword that
+ * FALLBACK_DESTINATIONS does not list resolves to nothing on the one day the
+ * fallback is needed, so membership is the only check worth making.
  */
-export function validateFallbackKey(value: string): string | null {
-	return /^[a-z0-9][a-z0-9_-]*$/.test(value) ? null : 'validation.fallbackKey';
+export function validateFallbackKey(
+	value: string,
+	configuredKeys: string[],
+	options: { listUnavailable?: boolean; storedKey?: string } = {},
+): string | null {
+	// Blank is "no keyword", which needs no entry; scans use the site-wide fallback.
+	if (value === '') return null;
+	// The picker degrades to a free-text input when the list could not be fetched.
+	// With no list to compare against, anything we did here would reject valid
+	// keywords, so length is the only client-side rule and the server is the gate.
+	if (options.listUnavailable) return null;
+	// An orphaned keyword stays saveable when it is not being changed, matching the
+	// API's exemption: it is already printed on posters, and blocking the save would
+	// strand the whole row over a field the user did not touch.
+	if (options.storedKey !== undefined && value === options.storedKey)
+		return null;
+	return configuredKeys.includes(value) ? null : 'validation.fallbackKey';
 }
 
 /** Shared http(s) check, mirroring the API's protocol allow-list. */

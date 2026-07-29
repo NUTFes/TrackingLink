@@ -59,6 +59,16 @@
 		// scan falls through to FALLBACK_URL above, and `scan_fallback_not_configured`
 		// shows up in Workers Logs during normal operation so you find out before an
 		// outage rather than during one.
+		//
+		// This list is the only thing that decides which keywords a project may be
+		// given: the API accepts exactly these (plus none at all), and the admin UI
+		// offers exactly these. So keeping a keyword short and ASCII is the job of
+		// whoever writes it here — it is printed into every QR code for the project,
+		// and a Japanese keyword is percent-encoded at 9 characters per character,
+		// which grows the printed symbol from 57x57 to 61x61 modules. Underscore is
+		// free by that measure: it is unreserved in RFC 3986, so it is never
+		// percent-encoded. Max 40 characters — longer keys are dropped when this is
+		// parsed, so a project can never be assigned one.
 		"FALLBACK_DESTINATIONS": {
 			"instagram": "https://www.instagram.com/nutfes?igsh=MTB1eXhpcWJ4YnQ0cA==",
 			"web": "https://www.nutfes.net/",

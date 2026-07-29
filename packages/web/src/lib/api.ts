@@ -159,6 +159,7 @@ const CODE_TO_KEY: Record<string, string> = {
 	PERMISSION_REQUIRED: 'error.permission',
 	NOT_OWNER: 'error.notOwner',
 	INVALID_BODY: 'error.invalidBody',
+	FALLBACK_KEY_NOT_CONFIGURED: 'error.fallbackKeyNotConfigured',
 	NO_FIELDS_TO_UPDATE: 'error.noFieldsToUpdate',
 	PROJECT_NOT_FOUND: 'error.projectNotFound',
 	QR_CODE_NOT_FOUND: 'error.qrNotFound',

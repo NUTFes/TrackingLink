@@ -21,6 +21,10 @@ export const ErrorCodes = {
 	PERMISSION_REQUIRED: 'PERMISSION_REQUIRED',
 	NOT_OWNER: 'NOT_OWNER',
 	INVALID_BODY: 'INVALID_BODY',
+	// Distinct from INVALID_BODY so the form can name the keyword and list the
+	// configured ones, instead of reporting a generic bad body for a field the user
+	// picked from a dropdown.
+	FALLBACK_KEY_NOT_CONFIGURED: 'FALLBACK_KEY_NOT_CONFIGURED',
 	NO_FIELDS_TO_UPDATE: 'NO_FIELDS_TO_UPDATE',
 	PROJECT_NOT_FOUND: 'PROJECT_NOT_FOUND',
 	QR_CODE_NOT_FOUND: 'QR_CODE_NOT_FOUND',
@@ -46,6 +50,8 @@ const FALLBACK_MESSAGES: Record<ErrorCode, string> = {
 	PERMISSION_REQUIRED: 'Insufficient permissions',
 	NOT_OWNER: 'You can only modify items you created',
 	INVALID_BODY: 'Invalid request body',
+	FALLBACK_KEY_NOT_CONFIGURED:
+		'That fallback keyword is not in FALLBACK_DESTINATIONS',
 	NO_FIELDS_TO_UPDATE: 'No fields to update',
 	PROJECT_NOT_FOUND: 'Project not found',
 	QR_CODE_NOT_FOUND: 'QR code not found',

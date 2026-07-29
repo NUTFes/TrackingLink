@@ -49,33 +49,72 @@ const httpUrl = z
  * Keyword baked into this project's QR codes as `&p=<key>`, resolved against the
  * FALLBACK_DESTINATIONS var when D1 is unreachable (see src/fallback.ts).
  *
- * ASCII-only on purpose: a Japanese keyword is percent-encoded at 9 characters per
- * character, which grows the printed symbol from 57x57 to 61x61 modules. Optional
- * — '' means the admin UI derives one from the destination host instead.
+ * No character rule here on purpose. Which characters a keyword uses decides
+ * nothing — whether it has an entry in that var decides everything, because a
+ * keyword the config does not know is inert until D1 goes down, which is the
+ * worst possible moment to find out. That check is `rejectUnconfiguredFallbackKey`
+ * below, and it needs the env, so it cannot live in a static schema. Length still
+ * belongs here: it bounds the column and the printed payload.
+ *
+ * Optional; '' means scans use the site-wide static fallback instead.
  */
 const FALLBACK_KEY_MAX = 40;
-const fallbackKey = z
-	.string()
-	.max(FALLBACK_KEY_MAX)
-	.regex(
-		// Underscore is allowed because social handles use it — the X account is
-		// x.com/nut_fes — and it costs nothing to carry: `_` is unreserved in RFC
-		// 3986, so encodeURIComponent leaves it alone, and the QR payload is
-		// already in byte mode (lowercase letters are absent from QR's
-		// alphanumeric set), so it is the same 8 bits as any other character.
-		// Hyphen stays last in the class: `[a-z0-9-_]` would read `9-_` as a range
-		// and quietly admit uppercase and punctuation.
-		/^$|^[a-z0-9][a-z0-9_-]*$/,
-		'Use lowercase letters, digits, hyphens and underscores only',
-	);
+const fallbackKey = z.string().max(FALLBACK_KEY_MAX);
 
-const createProjectBodySchema = z.object({
+/**
+ * Whether `next` may be stored as a project's fallback keyword.
+ *
+ * `stored` is the row's current keyword, and passing it exempts a value that is
+ * not being changed. Without that exemption a project whose keyword was later
+ * dropped from FALLBACK_DESTINATIONS could not be saved at all: renaming it would
+ * 400 on a field nobody touched, and that keyword is already printed on posters —
+ * the admin UI keeps such an orphan visible and selected for the same reason.
+ * Create has no stored value, so membership is required there.
+ */
+export function isFallbackKeyAllowed(
+	next: string,
+	map: Record<string, string>,
+	stored?: string,
+): boolean {
+	// '' is "no keyword", which needs no entry — see resolveFallbackUrl.
+	if (next === '') return true;
+	if (stored !== undefined && next === stored) return true;
+	// Object.keys rather than `next in map`, so a keyword of 'constructor' or
+	// 'toString' is not waved through by the prototype chain.
+	return Object.keys(map).includes(next);
+}
+
+/**
+ * 400 when the keyword is not one an operator configured, or null to proceed.
+ *
+ * `meta` carries the offending keyword and the configured list so the form can
+ * name both rather than saying only that something was invalid.
+ */
+function rejectUnconfiguredFallbackKey(
+	c: Context<HonoEnv>,
+	next: string,
+	stored?: string,
+) {
+	const map = parseFallbackMap(c.env.FALLBACK_DESTINATIONS);
+	if (isFallbackKeyAllowed(next, map, stored)) return null;
+	return fail(c, 400, ErrorCodes.FALLBACK_KEY_NOT_CONFIGURED, {
+		fields: ['fallbackKey'],
+		meta: {
+			fallbackKey: next,
+			configuredKeys: Object.keys(map).sort((a, b) => a.localeCompare(b)),
+		},
+	});
+}
+
+// Exported alongside isFallbackKeyAllowed so the accepted-body rules can be
+// tested without a Worker: everything else about these handlers needs real D1.
+export const createProjectBodySchema = z.object({
 	projectName: z.string().min(1, 'Project name is required').max(NAME_MAX),
 	destinationUrl: httpUrl,
 	fallbackKey: fallbackKey.optional(),
 });
 
-const updateProjectBodySchema = z.object({
+export const updateProjectBodySchema = z.object({
 	projectName: z.string().min(1).max(NAME_MAX).optional(),
 	destinationUrl: httpUrl.optional(),
 	fallbackKey: fallbackKey.optional(),
@@ -397,6 +436,10 @@ projectsApp.post('/', async (c) => {
 	// Passed explicitly rather than relying on the column default, because Drizzle
 	// deliberately keeps the field required — see the note on schema.projects.
 	const key = parsed.data.fallbackKey ?? '';
+	// No stored value to fall back on at creation, so the keyword has to be one the
+	// config knows.
+	const unconfigured = rejectUnconfiguredFallbackKey(c, key);
+	if (unconfigured) return unconfigured;
 
 	const db = getDb(c.env.DB);
 	await db.insert(schema.projects).values({
@@ -486,6 +529,24 @@ projectsApp.put('/:id', async (c) => {
 	}
 
 	const db = getDb(c.env.DB);
+	if (values.fallbackKey !== undefined) {
+		// One extra read, and only when the keyword is in the body — the stored value
+		// is what lets an already-printed orphan be saved again unchanged. A
+		// name-only edit never pays for this.
+		const stored = await db
+			.select({ fallbackKey: schema.projects.fallbackKey })
+			.from(schema.projects)
+			.where(eq(schema.projects.projectId, projectId))
+			.get();
+		if (!stored) return fail(c, 404, ErrorCodes.PROJECT_NOT_FOUND);
+		const unconfigured = rejectUnconfiguredFallbackKey(
+			c,
+			values.fallbackKey,
+			stored.fallbackKey,
+		);
+		if (unconfigured) return unconfigured;
+	}
+
 	const result = await db
 		.update(schema.projects)
 		.set(values)

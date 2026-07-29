@@ -25,9 +25,12 @@ describe('deriveFallbackKey', () => {
 		expect(deriveFallbackKey('https://example.co.jp/path')).toBe('example');
 	});
 
-	it('lowercases and strips characters the API would reject', () => {
-		// The API accepts ^[a-z0-9][a-z0-9_-]*$, so a suggestion that fails
-		// validation would be a self-inflicted form error.
+	it('lowercases and narrows the host label to a plausible keyword', () => {
+		// The API no longer restricts which characters a keyword may use — it checks
+		// membership in FALLBACK_DESTINATIONS instead. This narrowing stays because
+		// the output is only a *suggestion* matched against that list, and a
+		// suggestion carrying the host's punctuation would never match an entry
+		// anyone wrote by hand.
 		expect(deriveFallbackKey('https://WWW.Insta_Gram.com/')).toBe('insta_gram');
 		expect(deriveFallbackKey('https://my-shop.example.com/')).toBe('my-shop');
 		expect(deriveFallbackKey('https://Insta!Gram.com/')).toBe('instagram');
@@ -40,7 +43,8 @@ describe('deriveFallbackKey', () => {
 	});
 
 	it('does not leave a leading hyphen or underscore', () => {
-		// The rule requires an alphanumeric first character.
+		// Cosmetic now rather than required: a suggestion starting with punctuation
+		// reads like a mistake in the picker even though the API would accept it.
 		expect(deriveFallbackKey('https://_foo.example.com/')).toBe('foo');
 		expect(deriveFallbackKey('https://-foo.example.com/')).toBe('foo');
 	});

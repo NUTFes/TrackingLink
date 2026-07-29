@@ -251,7 +251,18 @@ function ManageProjectsContent() {
 				id: 'editProjectFallbackKey',
 				value: editFallbackKey,
 				maxLength: FALLBACK_KEY_MAX,
-				validate: validateFallbackKey,
+				// The stored keyword is passed so an orphan the form is showing can be
+				// saved back unchanged — the API exempts it for the same reason, and
+				// without this an unrelated rename would be blocked here instead.
+				validate: (value) =>
+					validateFallbackKey(
+						value,
+						fallback.destinations.map((d) => d.key),
+						{
+							listUnavailable: fallback.failed,
+							storedKey: editing.fallbackKey,
+						},
+					),
 			},
 		});
 		if (!ok) return;

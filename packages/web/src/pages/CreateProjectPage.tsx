@@ -81,7 +81,15 @@ function CreateProjectForm() {
 				id: 'fallbackKey',
 				value: fallbackKey,
 				maxLength: FALLBACK_KEY_MAX,
-				validate: validateFallbackKey,
+				// A new project has no stored keyword to be grandfathered in, so the
+				// value has to be one the Worker knows — unless the list never loaded,
+				// in which case only the server can tell.
+				validate: (value) =>
+					validateFallbackKey(
+						value,
+						fallback.destinations.map((d) => d.key),
+						{ listUnavailable: fallback.failed },
+					),
 			},
 		});
 		if (!ok) return;
