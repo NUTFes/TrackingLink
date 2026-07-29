@@ -12,10 +12,14 @@ covers installing dependencies and running `packages/web` locally against the de
 ```sh
 pnpm lint        # biome check .
 pnpm typecheck   # tsc --noEmit in both packages
+pnpm test        # vitest unit tests for packages/web
 pnpm build       # vite build for packages/web
 ```
 
-There's no automated test suite yet (see "Not included" below for other gaps) — please describe
+There's a small unit test suite (`pnpm test`) covering the pure logic that is
+hardest to eyeball — the API error → message mapping, locale-aware date
+formatting, filename slugging and the `localStorage` fallback. Page components
+are deliberately not covered yet (see "Not included" below for other gaps) — please describe
 how you manually verified your change in the PR description.
 
 ## Scope
@@ -27,7 +31,9 @@ focused PRs are much easier to review.
 
 Known gaps that are welcome as contributions:
 
-- A real test suite (`vitest` is already used elsewhere in the ecosystem and would fit naturally).
+- Component-level tests for the page components (`@testing-library/react` on top of the
+  existing `vitest` setup). The pages are large and fetch-heavy, so this needs a bit of
+  structure first.
 - The LINE Bot/LIFF QR scanner and receipt-printer (ePOS) integrations mentioned in the README's
   "Not included" section.
 - Additional `Verifier` implementations under `packages/api/src/auth/` (see the "認証" section in

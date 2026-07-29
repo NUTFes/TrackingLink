@@ -10,7 +10,9 @@
 		"build": "tsc -b && vite build",
 		"preview": "vite preview",
 		"deploy": "tsc -b && vite build && wrangler deploy",
-		"typecheck": "tsc -b --noEmit"
+		"typecheck": "tsc -b --noEmit",
+		"test": "vitest run",
+		"test:watch": "vitest"
 	},
 	"dependencies": {
 		"clsx": "^2.1.1",
@@ -28,9 +30,11 @@
 		"@types/react": "^18.3.17",
 		"@types/react-dom": "^18.3.5",
 		"@vitejs/plugin-react": "^4.3.4",
+		"jsdom": "25.0.1",
 		"tailwindcss": "^4.0.0",
 		"typescript": "^5.7.2",
 		"vite": "^6.0.3",
+		"vitest": "2.1.8",
 		"wrangler": "^3.90.0"
 	}
 }

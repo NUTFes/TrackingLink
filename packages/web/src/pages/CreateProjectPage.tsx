@@ -1,30 +1,92 @@
-import { ArrowLeft, Loader } from 'lucide-react';
-import { type FormEvent, useState } from 'react';
+import { ArrowLeft, Loader2 } from 'lucide-react';
+import { type FormEvent, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { useAuthContext } from '../components/AuthProvider';
+import { FallbackKeySelect } from '../components/FallbackKeySelect';
 import { PermissionGuard } from '../components/PermissionGuard';
+import { useToast } from '../components/ToastProvider';
 import { TRACKING_LINK_API_URL } from '../config';
+import { useApiErrorMessage } from '../hooks/useApiError';
+import { useFallbackDestinations } from '../hooks/useFallbackDestinations';
+import {
+	useFieldErrors,
+	validateFallbackKey,
+	validateHttpUrl,
+} from '../hooks/useFieldErrors';
 import { Permissions } from '../hooks/useStaffAuth';
-import { authFetch } from '../lib/api';
+import { ApiError, assertOk, authFetch } from '../lib/api';
 import { useTranslation } from '../lib/i18n';
+import { deriveFallbackKey } from '../lib/qr';
+import {
+	btnPrimary,
+	btnSecondary,
+	fieldErrorText,
+	inputBase,
+	labelBase,
+} from '../lib/styles';
+
+const NAME_MAX = 200;
+const URL_MAX = 2048;
+const FALLBACK_KEY_MAX = 40;
 
 function CreateProjectForm() {
-	const { user } = useAuthContext();
 	const { t } = useTranslation();
 	const navigate = useNavigate();
+	const toast = useToast();
+	const describeError = useApiErrorMessage();
+	const { errors, validate, setFromFields } = useFieldErrors();
+	const fallback = useFallbackDestinations();
 	const [projectName, setProjectName] = useState('');
 	const [destinationUrl, setDestinationUrl] = useState('');
+	const [fallbackKey, setFallbackKey] = useState('');
 	const [isSubmitting, setIsSubmitting] = useState(false);
-	const [error, setError] = useState<string | null>(null);
 
-	const adminUser = user?.sub ?? 'admin';
+	// Once the field has been edited by hand, the destination URL stops driving it.
+	// Silently overwriting a deliberate choice would be worse than not suggesting
+	// at all, because the value ends up printed on posters.
+	const fallbackKeyTouched = useRef(false);
+
+	const onDestinationUrlChange = (value: string) => {
+		setDestinationUrl(value);
+		if (fallbackKeyTouched.current) return;
+		// Only suggest a keyword that actually exists in the Worker configuration:
+		// anything else would look chosen while doing nothing during an outage.
+		const derived = deriveFallbackKey(value);
+		const match = fallback.destinations.find((d) => d.key === derived);
+		setFallbackKey(match ? match.key : '');
+	};
 
 	const handleSubmit = async (e: FormEvent) => {
 		e.preventDefault();
-		if (!projectName.trim() || !destinationUrl.trim()) return;
+		if (isSubmitting) return;
+
+		const ok = validate({
+			projectName: {
+				id: 'projectName',
+				value: projectName,
+				required: true,
+				maxLength: NAME_MAX,
+			},
+			destinationUrl: {
+				id: 'destinationUrl',
+				value: destinationUrl,
+				required: true,
+				maxLength: URL_MAX,
+				// Checked client-side too, so the message is in the app's language.
+				// `type="url"` alone shows the *browser's* tooltip in the browser's
+				// language, and silently rejects `example.com` without saying a scheme
+				// is required.
+				validate: validateHttpUrl,
+			},
+			fallbackKey: {
+				id: 'fallbackKey',
+				value: fallbackKey,
+				maxLength: FALLBACK_KEY_MAX,
+				validate: validateFallbackKey,
+			},
+		});
+		if (!ok) return;
 
 		setIsSubmitting(true);
-		setError(null);
 		try {
 			const res = await authFetch(`${TRACKING_LINK_API_URL}/projects`, {
 				method: 'POST',
@@ -32,29 +94,32 @@ function CreateProjectForm() {
 				body: JSON.stringify({
 					projectName: projectName.trim(),
 					destinationUrl: destinationUrl.trim(),
-					adminUser,
+					fallbackKey: fallbackKey.trim(),
 				}),
 			});
-			if (!res.ok) {
-				const data = await res.json().catch(() => ({}));
-				throw new Error(
-					(data as { error?: string }).error ?? `HTTP ${res.status}`,
-				);
-			}
+			await assertOk(res);
+			// Fired before navigating, which only works because ToastProvider sits
+			// above the router. Without it, creating a project was completely silent —
+			// and since the list had no ORDER BY, the new row often was not on page 1
+			// either, so users concluded the create had failed and made another.
+			toast.success(t('projects.created'));
 			navigate('/links');
-		} catch (e) {
-			setError(e instanceof Error ? e.message : t('common.genericError'));
+		} catch (err) {
+			if (err instanceof ApiError && err.fields.length) {
+				setFromFields(err.fields, describeError(err));
+			}
+			toast.error(describeError(err));
 		} finally {
 			setIsSubmitting(false);
 		}
 	};
 
 	return (
-		<div className="container mx-auto max-w-2xl p-6">
+		<div className="mx-auto max-w-2xl p-4 sm:p-6">
 			<div className="mb-6">
 				<Link
 					to="/links"
-					className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
+					className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
 				>
 					<ArrowLeft className="h-4 w-4" />
 					{t('common.backToProjects')}
@@ -69,15 +134,9 @@ function CreateProjectForm() {
 					</p>
 				</div>
 
-				<form onSubmit={handleSubmit} className="p-5 space-y-5">
-					{error && (
-						<div className="rounded-md border border-destructive/50 bg-destructive/10 p-4">
-							<p className="text-sm text-destructive">{error}</p>
-						</div>
-					)}
-
+				<form onSubmit={handleSubmit} noValidate className="space-y-5 p-5">
 					<div className="space-y-1.5">
-						<label htmlFor="projectName" className="block text-sm font-medium">
+						<label htmlFor="projectName" className={labelBase}>
 							{t('createProject.nameLabel')}{' '}
 							<span className="text-destructive">*</span>
 						</label>
@@ -86,48 +145,83 @@ function CreateProjectForm() {
 							type="text"
 							value={projectName}
 							onChange={(e) => setProjectName(e.target.value)}
+							// Trim on blur so a stray trailing space simply disappears rather
+							// than becoming a validation failure.
+							onBlur={() => setProjectName((v) => v.trim())}
 							placeholder={t('createProject.namePlaceholder')}
-							required
-							className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+							maxLength={NAME_MAX}
+							aria-invalid={errors.projectName ? true : undefined}
+							aria-describedby={
+								errors.projectName ? 'projectName-error' : undefined
+							}
+							className={inputBase}
 						/>
+						{errors.projectName ? (
+							<p id="projectName-error" className={fieldErrorText}>
+								{errors.projectName}
+							</p>
+						) : null}
 					</div>
 
 					<div className="space-y-1.5">
-						<label
-							htmlFor="destinationUrl"
-							className="block text-sm font-medium"
-						>
+						<label htmlFor="destinationUrl" className={labelBase}>
 							{t('createProject.urlLabel')}{' '}
 							<span className="text-destructive">*</span>
 						</label>
 						<input
 							id="destinationUrl"
-							type="url"
+							// text, not url: validation is ours now, and the native bubble
+							// competes with the inline message while speaking the wrong
+							// language.
+							type="text"
+							inputMode="url"
 							value={destinationUrl}
-							onChange={(e) => setDestinationUrl(e.target.value)}
+							onChange={(e) => onDestinationUrlChange(e.target.value)}
+							onBlur={() => setDestinationUrl((v) => v.trim())}
 							placeholder={t('createProject.urlPlaceholder')}
-							required
-							className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+							maxLength={URL_MAX}
+							aria-invalid={errors.destinationUrl ? true : undefined}
+							aria-describedby={
+								errors.destinationUrl ? 'destinationUrl-error' : undefined
+							}
+							className={inputBase}
 						/>
+						{errors.destinationUrl ? (
+							<p id="destinationUrl-error" className={fieldErrorText}>
+								{errors.destinationUrl}
+							</p>
+						) : null}
 					</div>
 
-					<div className="flex items-center gap-3 pt-2">
+					<FallbackKeySelect
+						id="fallbackKey"
+						value={fallbackKey}
+						onChange={(v) => {
+							fallbackKeyTouched.current = true;
+							setFallbackKey(v);
+						}}
+						destinations={fallback.destinations}
+						staticFallbackUrl={fallback.staticFallbackUrl}
+						isLoading={fallback.isLoading}
+						failed={fallback.failed}
+						error={errors.fallbackKey}
+						disabled={isSubmitting}
+					/>
+
+					<div className="flex flex-col gap-2 pt-2 sm:flex-row sm:items-center sm:gap-3">
+						{/* Deliberately not disabled on empty input: an inert button with no
+						    explanation is the same dead end in different clothes. */}
 						<button
 							type="submit"
-							disabled={
-								isSubmitting || !projectName.trim() || !destinationUrl.trim()
-							}
-							className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
+							disabled={isSubmitting}
+							className={btnPrimary}
 						>
-							{isSubmitting && <Loader className="h-4 w-4 animate-spin" />}
+							{isSubmitting && <Loader2 className="h-4 w-4 animate-spin" />}
 							{isSubmitting
 								? t('createProject.creating')
 								: t('createProject.submit')}
 						</button>
-						<Link
-							to="/links"
-							className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted/50 transition-colors"
-						>
+						<Link to="/links" className={btnSecondary}>
 							{t('common.cancel')}
 						</Link>
 					</div>

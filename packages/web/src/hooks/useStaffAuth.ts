@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState } from 'react';
-import { apiFetch, clearToken, getToken, setToken } from '../lib/api';
+import {
+	NetworkError,
+	apiFetch,
+	clearToken,
+	getToken,
+	setToken,
+} from '../lib/api';
 
 export const Permissions = {
 	TRACKING_LINK_VIEW: 1 << 0,
@@ -34,21 +40,37 @@ export interface StaffUser {
 export function useStaffAuth() {
 	const [user, setUser] = useState<StaffUser | null>(null);
 	const [isLoading, setIsLoading] = useState(true);
+	/** i18n key set only when the session could not be *checked*, vs. rejected. */
+	const [authErrorKey, setAuthErrorKey] = useState<string | null>(null);
 
 	const checkAuth = useCallback(async () => {
 		if (!getToken()) {
 			setUser(null);
+			setAuthErrorKey(null);
 			setIsLoading(false);
 			return;
 		}
 		try {
 			const me = await apiFetch<StaffUser>('/auth/me');
 			setUser(me);
-		} catch {
+			setAuthErrorKey(null);
+		} catch (error) {
 			setUser(null);
+			// The empty `catch { setUser(null) }` this replaces could not tell a 401
+			// from `TypeError: Failed to fetch`, so a Wi-Fi blip or a cold Worker
+			// silently bounced a perfectly valid session to /login with no
+			// explanation. A network failure now surfaces a retry screen instead.
+			setAuthErrorKey(error instanceof NetworkError ? 'error.network' : null);
 		} finally {
 			setIsLoading(false);
 		}
+	}, []);
+
+	/** Drops the local session without a network call (used by the 401 handler). */
+	const reset = useCallback(() => {
+		clearToken();
+		setUser(null);
+		setAuthErrorKey(null);
 	}, []);
 
 	useEffect(() => {
@@ -70,7 +92,8 @@ export function useStaffAuth() {
 	const logout = useCallback(async () => {
 		clearToken();
 		setUser(null);
+		setAuthErrorKey(null);
 	}, []);
 
-	return { user, isLoading, login, logout, checkAuth };
+	return { user, isLoading, authErrorKey, login, logout, checkAuth, reset };
 }
