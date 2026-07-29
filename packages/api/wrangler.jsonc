@@ -69,18 +69,21 @@
 		// free by that measure: it is unreserved in RFC 3986, so it is never
 		// percent-encoded. Max 40 characters — longer keys are dropped when this is
 		// parsed, so a project can never be assigned one.
+		//
+		// Keys are lowercase without exception. Two reasons, both of which have
+		// already bitten this config: the lookup is a plain object index so it is
+		// case-sensitive, and the admin UI's suggestion is derived from the
+		// destination host and therefore always lowercase — so a `Bingo` entry can
+		// never match the `bingo` a project would be offered, and the scan silently
+		// falls through to FALLBACK_URL. Nothing reports that at scan time, because
+		// there is no way to tell a deliberately-blank keyword from a typo.
 		"FALLBACK_DESTINATIONS": {
-			"instagram": "https://www.instagram.com/nutfes?igsh=MTB1eXhpcWJ4YnQ0cA==",
+			"bingo": "https://bingo.nutfes.net/",
+			"instagram": "https://www.instagram.com/nutfes",
+			"tiktok": "https://www.tiktok.com/@nutfes_sns",
 			"web": "https://www.nutfes.net/",
-			// X is listed under two keys on purpose. "x" is what the admin UI derives
-			// from the host x.com, so it is the keyword a project gets if the field is
-			// left blank; "nut_fes" is the handle, which is what someone naming the
-			// keyword by hand reaches for. An unmatched keyword would silently send
-			// scans to FALLBACK_URL instead — exactly the case this map exists to
-			// prevent — and a spare entry costs nothing. Drop one once the projects
-			// are set up and you know which is in use.
 			"x": "https://x.com/nut_fes",
-			"nut_fes": "https://x.com/nut_fes"
+			"youtube": "https://youtube.com/channel/UCxpfPMcf4LCWSL1dR8ha5uQ?si=DGby9RdPrTj4b4c3"
 		}
 	}
 	// Secrets (set with `wrangler secret put <NAME>`, never committed):
