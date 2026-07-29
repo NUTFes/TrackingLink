@@ -176,6 +176,10 @@ const en: Dictionary = {
 	'qrCodes.dialogTitle': 'QR code',
 	'qrCodes.imageAlt': 'QR code for {name}',
 	'qrCodes.scanUrlLabel': 'This code links to',
+	'qrCodes.copyUrl': 'Copy this link',
+	'qrCodes.copied': 'Copied',
+	'qrCodes.copyFailed':
+		'Could not copy. Copying needs an https or localhost address — select the link and copy it by hand.',
 	'qrCodes.generateFailed': 'Failed to generate the QR code',
 	'qrCodes.downloadButton': 'Download PNG',
 	'qrCodes.scanCount': '{count} scans',
@@ -352,6 +356,10 @@ const ja: Dictionary = {
 	'qrCodes.dialogTitle': 'QRコード',
 	'qrCodes.imageAlt': '「{name}」のQRコード',
 	'qrCodes.scanUrlLabel': 'このコードの転送先',
+	'qrCodes.copyUrl': 'このリンクをコピー',
+	'qrCodes.copied': 'コピーしました',
+	'qrCodes.copyFailed':
+		'コピーできませんでした。コピーには https か localhost のアドレスが必要です。リンクを選択して手動でコピーしてください。',
 	'qrCodes.generateFailed': 'QRコードの生成に失敗しました',
 	'qrCodes.downloadButton': 'PNGをダウンロード',
 	'qrCodes.scanCount': '{count} 回',
