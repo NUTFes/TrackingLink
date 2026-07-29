@@ -55,7 +55,26 @@ export function deriveFallbackKey(destinationUrl: string): string {
 }
 
 /**
+ * The identifiers a scan URL can be built from — the subset of a QR code record
+ * that qrTargetUrl needs.
+ */
+export interface QrLinkIdentity {
+	id: string;
+	/**
+	 * Preferred in the printed URL. Optional because a response from an API older
+	 * than the short-code column omits it entirely, and null on a row the backfill
+	 * has not reached.
+	 */
+	shortCode?: string | null;
+}
+
+/**
  * The URL baked into a printed QR code.
+ *
+ * Built from the short code rather than the id: `/?id=q7mfe3x&p=instagram` is 74
+ * characters and encodes as a 49x49 symbol, against 103 characters and 57x57 for
+ * the UUID. Bigger modules at the same printed size is the difference between a
+ * poster that scans from across a corridor and one that does not.
  *
  * `&p=<fallbackKey>` is what lets a scan still reach somewhere sensible when the
  * Worker cannot read D1 — see packages/api/src/fallback.ts for why this is a
@@ -65,8 +84,13 @@ export function deriveFallbackKey(destinationUrl: string): string {
  * posters that have to be reprinted — and because a future bulk-print view needs
  * exactly this and nothing else from the dialog.
  */
-export function qrTargetUrl(qrId: string, fallbackKey = ''): string {
-	const base = `${FWD_BASE_URL}/?id=${qrId}`;
+export function qrTargetUrl(qr: QrLinkIdentity, fallbackKey = ''): string {
+	// Falling back to the UUID is not dead code, even though the backfill leaves
+	// every row with a short code: the Worker resolves either form, so a long URL
+	// still scans correctly, whereas rendering no URL at all would produce a blank
+	// QR image and a poster nobody can use. A briefly-larger symbol is the far
+	// cheaper failure. Empty string is treated as absent along with null.
+	const base = `${FWD_BASE_URL}/?id=${qr.shortCode || qr.id}`;
 	// Omitted rather than sent empty: `&p=` with no value is noise in the payload
 	// and the Worker treats a missing key and a blank one identically.
 	return fallbackKey ? `${base}&p=${encodeURIComponent(fallbackKey)}` : base;

@@ -60,6 +60,8 @@ const en: Dictionary = {
 		'That QR code no longer exists. It may have been deleted.',
 	'error.duplicateName':
 		'A QR code with this name already exists in this project.',
+	'error.shortCodeUnavailable':
+		'Could not allocate a short code for this QR code. Please try again.',
 	'error.tooManyRows':
 		'Too many rows ({total}) to export at once. The limit is {max} — narrow the date range.',
 	'error.rateLimited': 'Too many attempts. Please wait a moment and try again.',
@@ -230,6 +232,8 @@ const ja: Dictionary = {
 	'error.qrNotFound':
 		'このQRコードは存在しません。削除された可能性があります。',
 	'error.duplicateName': 'この名前のQRコードはこのプロジェクトに既にあります。',
+	'error.shortCodeUnavailable':
+		'短縮コードを発行できませんでした。もう一度お試しください。',
 	'error.tooManyRows':
 		'件数が多すぎます（{total}件）。一度に出力できるのは{max}件までです。期間を絞ってください。',
 	'error.rateLimited':

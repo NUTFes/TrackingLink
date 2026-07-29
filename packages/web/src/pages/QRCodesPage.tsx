@@ -33,6 +33,7 @@ import { useTranslation } from '../lib/i18n';
 import {
 	QR_CAPTION_DEFAULTS,
 	type QrCaptionOptions,
+	type QrLinkIdentity,
 	deriveFallbackKey,
 	qrCaptionLines,
 	qrPngBlob,
@@ -54,6 +55,13 @@ import { cn } from '../lib/utils';
 
 interface QRCodeRecord {
 	id: string;
+	/**
+	 * What goes in the printed URL. Absent on responses from an older API, null on
+	 * a row the backfill has not reached — qrTargetUrl falls back to `id` in both
+	 * cases. Never shown on its own: the id is an implementation detail, and the
+	 * only identifier a user needs to see is the scan URL.
+	 */
+	shortCode?: string | null;
 	projectId: string;
 	name: string;
 	medium: string;
@@ -108,12 +116,14 @@ function useQRDataUrl(text: string | null) {
  * announcing the image again would just be noise.
  */
 function QRThumbnail({
-	qrId,
+	qr: { id, shortCode },
 	fallbackKey,
-}: { qrId: string; fallbackKey: string }) {
+}: { qr: QrLinkIdentity; fallbackKey: string }) {
+	// The thumbnail has to encode the same URL as the dialog and the download, or
+	// it would be a preview of a different QR code than the one being printed.
 	const url = useMemo(
-		() => qrTargetUrl(qrId, fallbackKey),
-		[qrId, fallbackKey],
+		() => qrTargetUrl({ id, shortCode }, fallbackKey),
+		[id, shortCode, fallbackKey],
 	);
 	const { dataUrl } = useQRDataUrl(url);
 	return (
@@ -189,8 +199,8 @@ function QRDialog({
 	const { t } = useTranslation();
 	const toast = useToast();
 	const url = useMemo(
-		() => qrTargetUrl(qr.id, fallbackKey),
-		[qr.id, fallbackKey],
+		() => qrTargetUrl(qr, fallbackKey),
+		[qr.id, qr.shortCode, fallbackKey],
 	);
 	const { dataUrl, failed } = useQRDataUrl(url);
 	const [isDownloading, setIsDownloading] = useState(false);
@@ -624,10 +634,7 @@ function QRCodesContent() {
 								className="p-4 transition-colors hover:bg-muted/30"
 							>
 								<div className="flex items-start gap-3">
-									<QRThumbnail
-										qrId={qr.id}
-										fallbackKey={effectiveFallbackKey}
-									/>
+									<QRThumbnail qr={qr} fallbackKey={effectiveFallbackKey} />
 									<div className="min-w-0 flex-1">
 										<div className="flex items-start justify-between gap-2">
 											<p className="break-words text-sm font-medium leading-snug">

@@ -163,6 +163,7 @@ const CODE_TO_KEY: Record<string, string> = {
 	PROJECT_NOT_FOUND: 'error.projectNotFound',
 	QR_CODE_NOT_FOUND: 'error.qrNotFound',
 	DUPLICATE_NAME: 'error.duplicateName',
+	SHORT_CODE_UNAVAILABLE: 'error.shortCodeUnavailable',
 	CSV_EXPORT_DISABLED: 'csvExport.disabled',
 	TOO_MANY_ROWS: 'error.tooManyRows',
 	RATE_LIMITED: 'error.rateLimited',

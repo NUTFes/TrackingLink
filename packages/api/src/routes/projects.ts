@@ -17,7 +17,9 @@ import type { HonoEnv } from '../auth';
 import { getDb, schema } from '../db';
 import { ErrorCodes, fail } from '../errors';
 import { parseFallbackMap } from '../fallback';
+import { logEvent } from '../log';
 import { Permissions, hasPermission } from '../permissions';
+import { ShortCodeExhaustedError, insertWithShortCode } from '../short-code';
 
 // Length caps keep a single row (and therefore the database, and the CSV export)
 // bounded. Without them a 10k-character name is accepted and then wrecks every
@@ -122,6 +124,30 @@ const PROJECTS_MAX_LIMIT = 50;
 function isUniqueConstraintError(error: unknown): boolean {
 	return (
 		error instanceof Error && /UNIQUE constraint failed/i.test(error.message)
+	);
+}
+
+/**
+ * True if the violated constraint was specifically the short-code index.
+ *
+ * QRCodes carries two unique indexes — (project_id, name) and short_code — and
+ * they need opposite handling: a name clash is the user's to fix (409), a short
+ * code clash is ours to retry silently. SQLite names the offending columns in the
+ * message ("UNIQUE constraint failed: QRCodes.short_code"), which is the only
+ * signal available to tell them apart.
+ *
+ * Getting this wrong is not hypothetical: without the column check, creating a
+ * second QR code with a name already in use would be treated as a collision,
+ * retried five times, and then reported as "could not allocate a short code"
+ * instead of "that name is taken".
+ *
+ * Exported for tests — the two messages are the whole contract.
+ */
+export function isShortCodeCollision(error: unknown): boolean {
+	return (
+		isUniqueConstraintError(error) &&
+		error instanceof Error &&
+		/QRCodes\.short_code/i.test(error.message)
 	);
 }
 
@@ -1098,24 +1124,44 @@ projectsApp.post('/:id/qrcodes', async (c) => {
 	}
 
 	const { name, medium, location } = parsed.data;
+	// The UUID stays: it is the primary key AccessLogs cascades from, and QR codes
+	// already in print address rows by it. The short code is an additional handle,
+	// and the one new posters carry — see ../short-code.ts.
 	const qrId = crypto.randomUUID();
 	const createdAt = new Date().toISOString();
 
 	const db = getDb(c.env.DB);
+
+	let shortCode: string;
 	try {
-		await db.insert(schema.qrCodes).values({
-			id: qrId,
-			projectId,
-			name,
-			medium,
-			location: location ?? '',
-			createdAt,
-			creatorId: user?.sub ?? null,
-		});
+		({ shortCode } = await insertWithShortCode(
+			(candidate) =>
+				db.insert(schema.qrCodes).values({
+					id: qrId,
+					projectId,
+					name,
+					medium,
+					location: location ?? '',
+					shortCode: candidate,
+					createdAt,
+					creatorId: user?.sub ?? null,
+				}),
+			isShortCodeCollision,
+		));
 	} catch (error) {
+		if (error instanceof ShortCodeExhaustedError) {
+			// Never expected to happen — see SHORT_CODE_ATTEMPTS. Logged because if it
+			// ever does, the generator is at fault and nothing else would say so.
+			logEvent('qr_short_code_exhausted', {
+				projectId,
+				attempts: error.attempts,
+			});
+			return fail(c, 503, ErrorCodes.SHORT_CODE_UNAVAILABLE);
+		}
 		if (isUniqueConstraintError(error)) {
 			// One QR code per named item within a project. `fields` lets the web app
-			// mark the offending input rather than making the user guess.
+			// mark the offending input rather than making the user guess. Reached
+			// rather than retried because isShortCodeCollision rejected it.
 			return fail(c, 409, ErrorCodes.DUPLICATE_NAME, { fields: ['name'] });
 		}
 		throw error;
@@ -1128,6 +1174,7 @@ projectsApp.post('/:id/qrcodes', async (c) => {
 			name,
 			medium,
 			location: location ?? '',
+			shortCode,
 			createdAt,
 		},
 		201,

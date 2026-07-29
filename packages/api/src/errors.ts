@@ -25,6 +25,13 @@ export const ErrorCodes = {
 	PROJECT_NOT_FOUND: 'PROJECT_NOT_FOUND',
 	QR_CODE_NOT_FOUND: 'QR_CODE_NOT_FOUND',
 	DUPLICATE_NAME: 'DUPLICATE_NAME',
+	/**
+	 * Could not mint a unique short code for a new QR code. Distinct from a
+	 * generic 500 because it is retryable by simply trying again, and because
+	 * seeing it at all would mean the keyspace assumption in short-code.ts is
+	 * wrong.
+	 */
+	SHORT_CODE_UNAVAILABLE: 'SHORT_CODE_UNAVAILABLE',
 	CSV_EXPORT_DISABLED: 'CSV_EXPORT_DISABLED',
 	TOO_MANY_ROWS: 'TOO_MANY_ROWS',
 	RATE_LIMITED: 'RATE_LIMITED',
@@ -43,6 +50,8 @@ const FALLBACK_MESSAGES: Record<ErrorCode, string> = {
 	PROJECT_NOT_FOUND: 'Project not found',
 	QR_CODE_NOT_FOUND: 'QR code not found',
 	DUPLICATE_NAME: 'A QR code with this name already exists in this project',
+	SHORT_CODE_UNAVAILABLE:
+		'Could not allocate a short code for this QR code — please try again',
 	CSV_EXPORT_DISABLED: 'CSV export is not enabled',
 	TOO_MANY_ROWS: 'Too many rows — narrow the date range',
 	RATE_LIMITED: 'Too many attempts — try again shortly',
