@@ -16,16 +16,7 @@
 		"db:apply:local": "wrangler d1 execute trackinglink-db --local --file=./schema.sql",
 		"db:apply:remote": "wrangler d1 execute trackinglink-db --remote --file=./schema.sql",
 		"test": "vitest run",
-		"test:watch": "vitest",
-		"loadtest:seed": "node loadtest/seed/generate.mjs --logs=100000",
-		"loadtest:apply": "node loadtest/seed/run.mjs --target=local",
-		"loadtest:smoke": "k6 run loadtest/k6/smoke.js",
-		"loadtest:scan": "k6 run loadtest/k6/scan-sustained.js",
-		"loadtest:spike": "k6 run loadtest/k6/scan-spike.js",
-		"loadtest:admin": "k6 run loadtest/k6/admin-projects.js",
-		"loadtest:csv": "k6 run loadtest/k6/csv-export.js",
-		"loadtest:login": "k6 run loadtest/k6/login-bruteforce.js",
-		"loadtest:prod:ramp": "k6 run loadtest/k6/scan-ramping-prod.js"
+		"test:watch": "vitest"
 	},
 	"dependencies": {
 		"drizzle-orm": "^0.36.4",

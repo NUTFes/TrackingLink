@@ -1,12 +1,16 @@
 import {
 	ArrowLeft,
-	Download,
-	Loader2,
+	ChevronLeft,
+	ChevronRight,
+	Loader,
+	MapPin,
 	Pencil,
 	Plus,
-	QrCode as QrCodeIcon,
+	QrCode,
 	Trash2,
+	X,
 } from 'lucide-react';
+import QRCodeLib from 'qrcode';
 import {
 	type FormEvent,
 	useCallback,
@@ -16,38 +20,13 @@ import {
 } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useAuthContext } from '../components/AuthProvider';
-import { ConfirmDialog } from '../components/ConfirmDialog';
-import { Modal } from '../components/Modal';
-import { Pagination } from '../components/Pagination';
 import { PermissionGuard } from '../components/PermissionGuard';
-import { useToast } from '../components/ToastProvider';
 import { TRACKING_LINK_API_URL } from '../config';
-import { useApiErrorMessage } from '../hooks/useApiError';
-import { useFieldErrors } from '../hooks/useFieldErrors';
-import { useListQuery } from '../hooks/useListQuery';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
-import { ApiError, assertOk, authFetch } from '../lib/api';
-import { downloadBlob } from '../lib/download';
-import { formatDateTime, slugForFilename } from '../lib/format';
+import { authFetch } from '../lib/api';
 import { useTranslation } from '../lib/i18n';
-import {
-	deriveFallbackKey,
-	qrPngBlob,
-	qrPreviewDataUrl,
-	qrTargetUrl,
-} from '../lib/qr';
-import {
-	btnPrimary,
-	btnRow,
-	btnRowDestructive,
-	btnSecondary,
-	fieldErrorText,
-	inputBase,
-	labelBase,
-} from '../lib/styles';
-import { cn } from '../lib/utils';
 
-interface QRCodeRecord {
+interface QRCode {
 	id: string;
 	projectId: string;
 	name: string;
@@ -60,677 +39,662 @@ interface QRCodeRecord {
 interface Project {
 	name: string;
 	projectId: string;
-	destinationUrl: string;
-	fallbackKey: string;
 }
 
 const PAGE_SIZE = 10;
-const FIELD_MAX = 200;
+const FWD_BASE_URL = import.meta.env.VITE_FWD_BASE_URL ?? TRACKING_LINK_API_URL;
 
-/** Generates a QR image client-side. Nothing about the code is ever persisted. */
-function useQRDataUrl(text: string | null) {
+/** Generates a QR code as a data URL, client-side. */
+function useQRDataUrl(text: string): {
+	dataUrl: string | null;
+	error: boolean;
+} {
 	const [dataUrl, setDataUrl] = useState<string | null>(null);
-	const [failed, setFailed] = useState(false);
-
+	const [error, setError] = useState(false);
 	useEffect(() => {
-		if (!text) return;
 		let cancelled = false;
 		setDataUrl(null);
-		setFailed(false);
-		qrPreviewDataUrl(text)
+		setError(false);
+		QRCodeLib.toDataURL(text, {
+			width: 300,
+			margin: 2,
+			errorCorrectionLevel: 'H',
+		})
 			.then((url) => {
 				if (!cancelled) setDataUrl(url);
 			})
 			.catch(() => {
-				if (!cancelled) setFailed(true);
+				if (!cancelled) setError(true);
 			});
 		return () => {
 			cancelled = true;
 		};
 	}, [text]);
-
-	return { dataUrl, failed };
+	return { dataUrl, error };
 }
 
-/**
- * Row thumbnail.
- *
- * With one QR code issued per physical item, a list of otherwise identical-looking
- * rows is hard to scan; the image is the fastest way to confirm you are about to
- * edit or delete the right one. `alt=""` because the name is right next to it —
- * announcing the image again would just be noise.
- */
-function QRThumbnail({
-	qrId,
-	fallbackKey,
-}: { qrId: string; fallbackKey: string }) {
-	const url = useMemo(
-		() => qrTargetUrl(qrId, fallbackKey),
-		[qrId, fallbackKey],
-	);
-	const { dataUrl } = useQRDataUrl(url);
+function QRDialog({ qr, onClose }: { qr: QRCode; onClose: () => void }) {
+	const { t } = useTranslation();
+	const url = `${FWD_BASE_URL}/?id=${qr.id}`;
+	const { dataUrl: qrDataUrl, error: qrError } = useQRDataUrl(url);
+
 	return (
-		<div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded border bg-white">
-			{dataUrl ? (
-				<img src={dataUrl} alt="" className="h-full w-full object-contain" />
-			) : (
-				<QrCodeIcon
-					className="h-5 w-5 text-muted-foreground/40"
-					aria-hidden="true"
-				/>
-			)}
+		<div
+			className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+			onClick={onClose}
+		>
+			<div
+				role="dialog"
+				aria-modal="true"
+				aria-label={t('qrCodes.dialogTitle')}
+				className="relative rounded-lg border bg-card p-6 shadow-xl w-full max-w-sm mx-4"
+				onClick={(e) => e.stopPropagation()}
+				onKeyDown={(e) => e.stopPropagation()}
+			>
+				<div className="flex items-center justify-between mb-4">
+					<div>
+						<h3 className="font-semibold">{t('qrCodes.dialogTitle')}</h3>
+						<p className="text-xs text-muted-foreground mt-0.5">
+							{qr.name} · {qr.medium} · {qr.location}
+						</p>
+					</div>
+					<button
+						type="button"
+						onClick={onClose}
+						aria-label={t('common.close')}
+						className="rounded-md p-1 hover:bg-muted/50 transition-colors"
+					>
+						<X className="h-4 w-4 text-muted-foreground" />
+					</button>
+				</div>
+
+				<div className="flex flex-col items-center gap-3">
+					<div className="relative flex h-[240px] w-[240px] items-center justify-center rounded-md border bg-muted/20">
+						{!qrDataUrl && !qrError && (
+							<Loader className="h-8 w-8 animate-spin text-muted-foreground" />
+						)}
+						{qrError && (
+							<p className="text-xs text-destructive px-4 text-center">
+								{t('qrCodes.generateFailed')}
+							</p>
+						)}
+						{qrDataUrl && (
+							<img
+								src={qrDataUrl}
+								alt={t('qrCodes.dialogTitle')}
+								className="h-full w-full rounded-md object-contain"
+							/>
+						)}
+					</div>
+					<p className="text-xs font-mono text-muted-foreground break-all text-center px-2">
+						{url}
+					</p>
+				</div>
+
+				{qrDataUrl && (
+					<a
+						href={qrDataUrl}
+						download={`qr-${qr.id}.png`}
+						className="mt-5 flex w-full items-center justify-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
+					>
+						{t('qrCodes.downloadButton')}
+					</a>
+				)}
+			</div>
 		</div>
 	);
 }
 
-function QRDialog({
-	qr,
-	fallbackKey,
-	onClose,
+function Pagination({
+	currentPage,
+	totalPages,
+	total,
+	onPageChange,
 }: {
-	qr: QRCodeRecord;
-	fallbackKey: string;
-	onClose: () => void;
+	currentPage: number;
+	totalPages: number;
+	total: number;
+	onPageChange: (page: number) => void;
 }) {
 	const { t } = useTranslation();
-	const toast = useToast();
-	const url = useMemo(
-		() => qrTargetUrl(qr.id, fallbackKey),
-		[qr.id, fallbackKey],
-	);
-	const { dataUrl, failed } = useQRDataUrl(url);
-	const [isDownloading, setIsDownloading] = useState(false);
-
-	const captionLines = [
-		qr.name,
-		[qr.medium, qr.location].filter(Boolean).join(' · '),
-	].filter(Boolean);
-
-	const handleDownload = async () => {
-		setIsDownloading(true);
-		try {
-			// A PNG with the name / medium / location printed underneath, saved via a
-			// blob. Previously this was `<a href={dataUrl} download="qr-<uuid>.png">`:
-			// the file was unidentifiable in a downloads folder, the printed sheet had
-			// no label at all, and on iOS Safari a data: URL tends to navigate in-tab
-			// rather than save — destroying this dialog in the process.
-			const blob = await qrPngBlob(url, captionLines);
-			downloadBlob(
-				blob,
-				`${slugForFilename(qr.name, qr.medium, qr.location)}.png`,
-			);
-		} catch (error) {
-			toast.error(
-				error instanceof Error
-					? t('qrCodes.generateFailed')
-					: t('common.genericError'),
-			);
-		} finally {
-			setIsDownloading(false);
-		}
-	};
+	if (totalPages <= 1) return null;
+	const start = (currentPage - 1) * PAGE_SIZE + 1;
+	const end = Math.min(currentPage * PAGE_SIZE, total);
+	const pages = Array.from({ length: totalPages }, (_, i) => i + 1)
+		.filter(
+			(p) => p === 1 || p === totalPages || Math.abs(p - currentPage) <= 1,
+		)
+		.reduce<(number | '…')[]>((acc, p, idx, arr) => {
+			if (idx > 0 && (arr[idx - 1] as number) < p - 1) acc.push('…');
+			acc.push(p);
+			return acc;
+		}, []);
 
 	return (
-		<Modal
-			open
-			onClose={onClose}
-			title={t('qrCodes.dialogTitle')}
-			className="sm:max-w-sm"
-			footer={
+		<div className="flex items-center justify-between border-t px-5 py-3">
+			<p className="text-xs text-muted-foreground">
+				{t('pagination.range', { start, end, total })}
+			</p>
+			<div className="flex items-center gap-1">
 				<button
 					type="button"
-					onClick={() => void handleDownload()}
-					disabled={!dataUrl || isDownloading}
-					className={cn(btnPrimary, 'w-full')}
+					onClick={() => onPageChange(Math.max(1, currentPage - 1))}
+					disabled={currentPage === 1}
+					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
 				>
-					{isDownloading ? (
-						<Loader2 className="h-4 w-4 animate-spin" />
-					) : (
-						<Download className="h-4 w-4" />
-					)}
-					{t('qrCodes.downloadButton')}
+					<ChevronLeft className="h-4 w-4" />
 				</button>
-			}
-		>
-			<div className="flex flex-col items-center gap-3">
-				<p className="w-full break-words text-center text-sm font-medium">
-					{qr.name}
-				</p>
-				<p className="w-full break-words text-center text-xs text-muted-foreground">
-					{t('common.medium')}: {qr.medium}
-					{qr.location ? ` / ${t('common.location')}: ${qr.location}` : ''}
-				</p>
-
-				<div className="relative flex aspect-square w-full max-w-[260px] items-center justify-center rounded-md border bg-white">
-					{!dataUrl && !failed && (
-						<div role="status" aria-label={t('common.loading')}>
-							<Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-						</div>
-					)}
-					{failed && (
-						<p
-							role="alert"
-							className="px-4 text-center text-xs text-destructive"
+				{pages.map((p, idx) =>
+					p === '…' ? (
+						<span
+							key={`ellipsis-${idx}`}
+							className="px-1 text-xs text-muted-foreground"
 						>
-							{t('qrCodes.generateFailed')}
-						</p>
-					)}
-					{dataUrl && (
-						<img
-							src={dataUrl}
-							// Names the specific code rather than the generic "QR code".
-							alt={t('qrCodes.imageAlt', { name: qr.name })}
-							className="h-full w-full rounded-md object-contain"
-						/>
-					)}
-				</div>
-
-				<div className="w-full">
-					<p className="mb-1 text-xs font-medium text-muted-foreground">
-						{t('qrCodes.scanUrlLabel')}
-					</p>
-					<p className="break-all rounded bg-muted/50 p-2 text-center font-mono text-xs">
-						{url}
-					</p>
-				</div>
+							…
+						</span>
+					) : (
+						<button
+							key={p}
+							type="button"
+							onClick={() => onPageChange(p as number)}
+							className={`h-7 min-w-7 rounded-md border px-2 text-xs transition-colors ${
+								currentPage === p
+									? 'bg-primary text-primary-foreground border-primary'
+									: 'hover:bg-muted/50'
+							}`}
+						>
+							{p}
+						</button>
+					),
+				)}
+				<button
+					type="button"
+					onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+					disabled={currentPage === totalPages}
+					className="flex h-7 w-7 items-center justify-center rounded-md border hover:bg-muted/50 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+				>
+					<ChevronRight className="h-4 w-4" />
+				</button>
 			</div>
-		</Modal>
+		</div>
+	);
+}
+
+function QRCard({
+	qr,
+	onView,
+	onEdit,
+	onDelete,
+	canEdit,
+	canDeleteThis,
+}: {
+	qr: QRCode;
+	onView: () => void;
+	onEdit: () => void;
+	onDelete: () => void;
+	canEdit: boolean;
+	canDeleteThis: boolean;
+}) {
+	const { t } = useTranslation();
+	return (
+		<div className="border-b last:border-0 px-4 py-4 hover:bg-muted/30 transition-colors">
+			<div className="flex items-start justify-between gap-2 mb-3">
+				<div className="min-w-0">
+					<p className="text-sm font-medium leading-snug truncate">{qr.name}</p>
+					<p className="mt-0.5 flex items-center gap-1.5 text-xs text-muted-foreground">
+						<span>{qr.medium}</span>
+						<span aria-hidden="true">·</span>
+						<MapPin className="h-3 w-3 shrink-0" />
+						<span className="truncate">{qr.location}</span>
+					</p>
+				</div>
+				<span className="text-xs text-muted-foreground shrink-0">
+					{qr.createdAt ? new Date(qr.createdAt).toLocaleDateString() : '-'}
+				</span>
+			</div>
+			<div className="flex items-center justify-end gap-2">
+				<button
+					type="button"
+					onClick={onView}
+					className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+				>
+					<QrCode className="h-3.5 w-3.5" />
+					{t('qrCodes.showButton')}
+				</button>
+				{canEdit && (
+					<button
+						type="button"
+						onClick={onEdit}
+						className="flex items-center gap-1.5 rounded-md border px-3 py-1.5 text-xs hover:bg-muted/50 transition-colors"
+					>
+						<Pencil className="h-3.5 w-3.5" />
+						{t('common.edit')}
+					</button>
+				)}
+				{canDeleteThis && (
+					<button
+						type="button"
+						onClick={onDelete}
+						className="flex items-center gap-1.5 rounded-md border border-destructive/30 px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+					>
+						<Trash2 className="h-3.5 w-3.5" />
+						{t('common.delete')}
+					</button>
+				)}
+			</div>
+		</div>
 	);
 }
 
 function QRCodesContent() {
 	const { user } = useAuthContext();
-	const { t, locale } = useTranslation();
-	const toast = useToast();
-	const describeError = useApiErrorMessage();
-	const { id: projectId } = useParams<{ id: string }>();
-
-	const permissions = user?.permissions ?? 0;
-	const canEdit = hasPermission(permissions, Permissions.TRACKING_LINK_EDIT);
+	const { t } = useTranslation();
+	const canEdit = hasPermission(
+		user?.permissions ?? 0,
+		Permissions.TRACKING_LINK_EDIT,
+	);
 	const canDelete = hasPermission(
-		permissions,
+		user?.permissions ?? 0,
 		Permissions.TRACKING_LINK_DELETE,
 	);
-	// DELETE can remove any QR code; EDIT only its own.
-	const canDeleteQR = (qr: QRCodeRecord) =>
+	// EDIT permission: can only delete your own QR codes. DELETE permission: can delete any.
+	const canDeleteQR = (qr: QRCode) =>
 		canDelete || (canEdit && qr.creatorId === user?.sub);
-
-	const buildUrl = useCallback(
-		(page: number) =>
-			`${TRACKING_LINK_API_URL}/projects/${projectId}/qrcodes?page=${page}&limit=${PAGE_SIZE}`,
-		[projectId],
-	);
-	const list = useListQuery<QRCodeRecord>(buildUrl, PAGE_SIZE);
-
+	const { id: projectId } = useParams<{ id: string }>();
 	const [project, setProject] = useState<Project | null>(null);
-
-	// What actually gets baked into the QR codes on this page. Falling back to a
-	// value derived from the destination host is what lets projects created before
-	// fallback_key existed carry a usable keyword with no data migration.
-	const effectiveFallbackKey = project
-		? project.fallbackKey || deriveFallbackKey(project.destinationUrl)
-		: '';
-	const [formOpen, setFormOpen] = useState(false);
-	const [editing, setEditing] = useState<QRCodeRecord | null>(null);
-	const [name, setName] = useState('');
-	const [medium, setMedium] = useState('');
-	const [location, setLocation] = useState('');
+	const [qrCodes, setQrCodes] = useState<QRCode[]>([]);
+	const [total, setTotal] = useState(0);
+	const [isLoading, setIsLoading] = useState(false);
 	const [isSaving, setIsSaving] = useState(false);
-	const [deletingId, setDeletingId] = useState<string | null>(null);
-	const [confirmTarget, setConfirmTarget] = useState<QRCodeRecord | null>(null);
-	const [dialogQR, setDialogQR] = useState<QRCodeRecord | null>(null);
-	const {
-		errors,
-		validate,
-		clear: clearErrors,
-		setFromFields,
-	} = useFieldErrors();
+	const [error, setError] = useState<string | null>(null);
+	const [newName, setNewName] = useState('');
+	const [newMedium, setNewMedium] = useState('');
+	const [newLocation, setNewLocation] = useState('');
+	const [showForm, setShowForm] = useState(false);
+	const [formError, setFormError] = useState<string | null>(null);
+	const [editingQR, setEditingQR] = useState<QRCode | null>(null);
+	const [currentPage, setCurrentPage] = useState(1);
+	const [dialogQR, setDialogQR] = useState<QRCode | null>(null);
 
-	// Separate from the list so a failure here is visible. The old code did
-	// `if (projectRes.ok) { … }` with no else, so a 403/404 on the project just made
-	// the subtitle quietly vanish.
+	const fetchData = useCallback(
+		async (page: number) => {
+			if (!projectId) return;
+			setIsLoading(true);
+			setError(null);
+			try {
+				const [projectRes, qrRes] = await Promise.all([
+					authFetch(`${TRACKING_LINK_API_URL}/projects/${projectId}`),
+					authFetch(
+						`${TRACKING_LINK_API_URL}/projects/${projectId}/qrcodes?page=${page}&limit=${PAGE_SIZE}`,
+					),
+				]);
+				if (projectRes.ok) {
+					const p = await projectRes.json();
+					setProject(p as Project);
+				}
+				if (!qrRes.ok) throw new Error(`HTTP ${qrRes.status}`);
+				const data = await qrRes.json();
+				setQrCodes(Array.isArray(data.data) ? data.data : []);
+				setTotal(typeof data.total === 'number' ? data.total : 0);
+			} catch (e) {
+				setError(e instanceof Error ? e.message : t('common.genericError'));
+			} finally {
+				setIsLoading(false);
+			}
+		},
+		[projectId, t],
+	);
+
 	useEffect(() => {
-		if (!projectId) return;
-		let cancelled = false;
-		authFetch(`${TRACKING_LINK_API_URL}/projects/${projectId}`)
-			.then(async (res) => {
-				await assertOk(res);
-				const body = (await res.json()) as Project;
-				if (!cancelled) setProject(body);
-			})
-			.catch((error: unknown) => {
-				if (!cancelled) toast.error(describeError(error));
-			});
-		return () => {
-			cancelled = true;
-		};
-	}, [projectId, toast, describeError]);
+		fetchData(currentPage);
+	}, [fetchData, currentPage]);
 
-	const isDirty = editing
-		? name !== editing.name ||
-			medium !== editing.medium ||
-			location !== editing.location
-		: Boolean(name || medium || location);
-
-	const openCreate = () => {
-		setEditing(null);
-		setName('');
-		setMedium('');
-		setLocation('');
-		clearErrors();
-		setFormOpen(true);
+	const resetForm = () => {
+		setNewName('');
+		setNewMedium('');
+		setNewLocation('');
+		setEditingQR(null);
+		setShowForm(false);
+		setFormError(null);
 	};
 
-	const openEdit = (qr: QRCodeRecord) => {
-		setEditing(qr);
-		setName(qr.name);
-		setMedium(qr.medium);
-		setLocation(qr.location);
-		clearErrors();
-		setFormOpen(true);
+	const openCreateForm = () => {
+		if (showForm && !editingQR) {
+			setShowForm(false);
+			return;
+		}
+		setNewName('');
+		setNewMedium('');
+		setNewLocation('');
+		setEditingQR(null);
+		setShowForm(true);
+		setFormError(null);
 	};
 
-	// Guarded, because three separate paths used to wipe in-progress input with no
-	// warning: opening another row's edit form, hitting "New QR code", and Cancel.
-	const requestCloseForm = () => {
-		if (isDirty && !window.confirm(t('common.discardChanges'))) return;
-		setFormOpen(false);
-		setEditing(null);
-		clearErrors();
+	const openEditForm = (qr: QRCode) => {
+		setNewName(qr.name);
+		setNewMedium(qr.medium);
+		setNewLocation(qr.location);
+		setEditingQR(qr);
+		setShowForm(true);
+		setFormError(null);
 	};
 
 	const handleSubmit = async (e: FormEvent) => {
 		e.preventDefault();
-		if (!projectId || isSaving) return;
-
-		const ok = validate({
-			name: { id: 'qrName', value: name, required: true, maxLength: FIELD_MAX },
-			medium: {
-				id: 'qrMedium',
-				value: medium,
-				required: true,
-				maxLength: FIELD_MAX,
-			},
-			// Not required: one QR code per item, and staff record where it went only
-			// when that is useful.
-			location: { id: 'qrLocation', value: location, maxLength: FIELD_MAX },
-		});
-		if (!ok) return;
+		if (!projectId) return;
+		const name = newName.trim();
+		const medium = newMedium.trim();
+		const location = newLocation.trim();
+		if (!name || !medium || !location) return;
 
 		setIsSaving(true);
+		setFormError(null);
 		try {
-			const url = editing
-				? `${TRACKING_LINK_API_URL}/projects/qrcodes/${editing.id}`
+			const url = editingQR
+				? `${TRACKING_LINK_API_URL}/projects/qrcodes/${editingQR.id}`
 				: `${TRACKING_LINK_API_URL}/projects/${projectId}/qrcodes`;
 			const res = await authFetch(url, {
-				method: editing ? 'PUT' : 'POST',
+				method: editingQR ? 'PUT' : 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({
-					name: name.trim(),
-					medium: medium.trim(),
-					location: location.trim(),
-				}),
+				body: JSON.stringify({ name, medium, location }),
 			});
-			await assertOk(res);
-
-			const wasEditing = editing !== null;
-			setFormOpen(false);
-			setEditing(null);
-			clearErrors();
-			if (wasEditing) {
-				await list.refresh();
+			if (!res.ok) {
+				const data = await res.json().catch(() => ({}));
+				throw new Error(
+					(data as { error?: string }).error ?? `HTTP ${res.status}`,
+				);
+			}
+			resetForm();
+			if (editingQR || currentPage === 1) {
+				await fetchData(currentPage);
 			} else {
-				// New rows sort first, so page 1 is where it is.
-				list.setPage(1);
-				if (list.page === 1) await list.refresh();
+				setCurrentPage(1);
 			}
-			toast.success(wasEditing ? t('qrCodes.updated') : t('qrCodes.created'));
-		} catch (err) {
-			if (err instanceof ApiError && err.fields.length) {
-				// A 409 now says which field collided; previously the user got a
-				// hardcoded Japanese sentence with nothing highlighted and had to guess.
-				setFromFields(err.fields, describeError(err));
-			}
-			// A toast, not form-local state: cancelling mid-save unmounted the form and
-			// the failure was written where nobody could see it.
-			toast.error(describeError(err));
+		} catch (e) {
+			setFormError(
+				e instanceof Error
+					? e.message
+					: editingQR
+						? t('qrCodes.editFailed')
+						: t('qrCodes.createFailed'),
+			);
 		} finally {
 			setIsSaving(false);
 		}
 	};
 
-	const handleConfirmDelete = async () => {
-		if (!confirmTarget) return;
-		const target = confirmTarget;
-		setDeletingId(target.id);
+	const handleDelete = async (qrId: string) => {
+		if (!confirm(t('qrCodes.deleteConfirm'))) return;
 		try {
 			const res = await authFetch(
-				`${TRACKING_LINK_API_URL}/projects/qrcodes/${target.id}`,
+				`${TRACKING_LINK_API_URL}/projects/qrcodes/${qrId}`,
 				{ method: 'DELETE' },
 			);
-			await assertOk(res);
-			setConfirmTarget(null);
-			// Refresh only. The old code then ran setTotal(total - 1), clobbering the
-			// count the server had just returned with one computed from a stale value.
-			await list.refresh();
-			toast.success(t('qrCodes.deleted'));
-		} catch (err) {
-			toast.error(describeError(err));
-		} finally {
-			setDeletingId(null);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			const newTotal = total - 1;
+			const newTotalPages = Math.max(1, Math.ceil(newTotal / PAGE_SIZE));
+			const targetPage = Math.min(currentPage, newTotalPages);
+			if (targetPage !== currentPage) {
+				setCurrentPage(targetPage);
+			} else {
+				await fetchData(currentPage);
+			}
+			setTotal(newTotal);
+		} catch (e) {
+			setError(e instanceof Error ? e.message : t('qrCodes.deleteFailed'));
 		}
 	};
 
-	const showEmpty = !list.isLoading && !list.error && list.items.length === 0;
+	const totalPages = useMemo(
+		() => Math.max(1, Math.ceil(total / PAGE_SIZE)),
+		[total],
+	);
 
 	return (
-		<div className="mx-auto max-w-4xl p-4 sm:p-6">
-			<div className="mb-4">
+		<div className="container mx-auto max-w-4xl p-4 md:p-6">
+			<div className="mb-4 md:mb-6">
 				<Link
 					to="/links"
-					className="inline-flex min-h-11 items-center gap-1 text-sm text-muted-foreground transition-colors hover:text-foreground"
+					className="flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground transition-colors"
 				>
 					<ArrowLeft className="h-4 w-4" />
 					{t('common.backToProjects')}
 				</Link>
 			</div>
 
-			<div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-				<div className="min-w-0">
-					<h1 className="text-xl font-bold sm:text-2xl">
+			<div className="mb-6 flex items-start justify-between gap-3">
+				<div>
+					<h1 className="text-xl md:text-2xl font-bold">
 						{t('qrCodes.heading')}
 					</h1>
 					{project && (
-						<p className="mt-1 break-words text-sm text-muted-foreground">
+						<p className="mt-1 text-sm text-muted-foreground">
 							{t('qrCodes.projectLabel', { name: project.name })}
 						</p>
 					)}
 				</div>
 				{canEdit && (
-					<button type="button" onClick={openCreate} className={btnPrimary}>
+					<button
+						type="button"
+						onClick={openCreateForm}
+						className="flex items-center gap-2 rounded-md bg-primary px-3 py-2 md:px-4 text-sm font-medium text-primary-foreground hover:bg-primary/90 transition-colors shrink-0"
+					>
 						<Plus className="h-4 w-4" />
 						{t('qrCodes.newButton')}
 					</button>
 				)}
 			</div>
 
-			<div className="overflow-hidden rounded-lg border bg-card shadow-sm">
-				{list.isLoading ? (
-					<div
-						role="status"
-						aria-live="polite"
-						className="flex items-center justify-center gap-2 p-10 text-sm text-muted-foreground"
-					>
-						<Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-						{t('common.loading')}
-					</div>
-				) : list.error ? (
-					<div className="flex flex-col items-center gap-3 p-10 text-center">
-						<p role="alert" className="text-sm text-destructive">
-							{list.error}
-						</p>
-						<button
-							type="button"
-							onClick={() => void list.refresh()}
-							className={btnSecondary}
-						>
-							{t('common.retry')}
-						</button>
-					</div>
-				) : showEmpty ? (
-					<div className="flex flex-col items-center gap-3 p-10 text-center">
-						<QrCodeIcon
-							className="h-8 w-8 text-muted-foreground"
-							aria-hidden="true"
-						/>
-						<p className="text-sm text-muted-foreground">
-							{t('qrCodes.empty')}
-						</p>
-						{canEdit && (
-							<button type="button" onClick={openCreate} className={btnPrimary}>
-								<Plus className="h-4 w-4" />
-								{t('qrCodes.newButton')}
-							</button>
+			{error && (
+				<div className="mb-4 rounded-md border border-destructive/50 bg-destructive/10 p-4">
+					<p className="text-sm text-destructive">{error}</p>
+				</div>
+			)}
+
+			{canEdit && showForm && (
+				<div className="mb-6 rounded-lg border bg-card p-4 md:p-5 shadow-sm">
+					<h2 className="mb-4 font-semibold">
+						{editingQR ? t('qrCodes.editFormTitle') : t('qrCodes.newFormTitle')}
+					</h2>
+					<form onSubmit={handleSubmit} className="space-y-3">
+						<div className="grid gap-3 sm:grid-cols-3">
+							<div className="space-y-1.5">
+								<label htmlFor="qrName" className="block text-sm font-medium">
+									{t('qrCodes.nameLabel')}
+								</label>
+								<input
+									id="qrName"
+									type="text"
+									value={newName}
+									onChange={(e) => setNewName(e.target.value)}
+									placeholder={t('qrCodes.namePlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<label htmlFor="qrMedium" className="block text-sm font-medium">
+									{t('qrCodes.mediumLabel')}
+								</label>
+								<input
+									id="qrMedium"
+									type="text"
+									value={newMedium}
+									onChange={(e) => setNewMedium(e.target.value)}
+									placeholder={t('qrCodes.mediumPlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
+							<div className="space-y-1.5">
+								<label htmlFor="location" className="block text-sm font-medium">
+									{t('qrCodes.locationLabel')}
+								</label>
+								<input
+									id="location"
+									type="text"
+									value={newLocation}
+									onChange={(e) => setNewLocation(e.target.value)}
+									placeholder={t('qrCodes.locationPlaceholder')}
+									required
+									className="w-full rounded-md border bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+								/>
+							</div>
+						</div>
+						{formError && (
+							<p className="rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+								{formError}
+							</p>
 						)}
-					</div>
-				) : (
-					// One list for every viewport, instead of a mobile-card tree and a
-					// desktop-table tree that had already drifted apart — different labels
-					// for the same button, different date granularity, and medium/location
-					// merged into one unlabelled line on mobile.
-					<ul className="divide-y divide-border">
-						{list.items.map((qr) => (
-							<li
-								key={qr.id}
-								className="p-4 transition-colors hover:bg-muted/30"
+						<div className="flex items-center gap-3">
+							<button
+								type="submit"
+								disabled={isSaving}
+								className="flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50 transition-colors"
 							>
-								<div className="flex items-start gap-3">
-									<QRThumbnail
-										qrId={qr.id}
-										fallbackKey={effectiveFallbackKey}
-									/>
-									<div className="min-w-0 flex-1">
-										<p className="break-words text-sm font-medium leading-snug">
-											{qr.name}
-										</p>
-										<dl className="mt-1 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-muted-foreground">
-											<div className="flex gap-1">
-												<dt>{t('common.medium')}:</dt>
-												<dd className="break-words">{qr.medium}</dd>
-											</div>
-											{qr.location ? (
-												<div className="flex min-w-0 gap-1">
-													<dt>{t('common.location')}:</dt>
-													<dd className="break-words">{qr.location}</dd>
+								{isSaving && <Loader className="h-4 w-4 animate-spin" />}
+								{editingQR ? t('common.save') : t('common.add')}
+							</button>
+							<button
+								type="button"
+								onClick={resetForm}
+								className="rounded-md border px-4 py-2 text-sm font-medium hover:bg-muted/50 transition-colors"
+							>
+								{t('common.cancel')}
+							</button>
+						</div>
+					</form>
+				</div>
+			)}
+
+			<div className="rounded-lg border bg-card shadow-sm">
+				<div className="border-b p-4 md:p-5">
+					<h2 className="font-semibold">{t('qrCodes.cardTitle')}</h2>
+					<p className="mt-0.5 text-sm text-muted-foreground">
+						{isLoading
+							? t('common.loading')
+							: t('common.totalCount', { total })}
+					</p>
+				</div>
+
+				{isLoading ? (
+					<div className="flex items-center justify-center py-16">
+						<Loader className="h-8 w-8 animate-spin text-primary" />
+					</div>
+				) : qrCodes.length === 0 ? (
+					<p className="px-5 py-10 text-center text-sm text-muted-foreground">
+						{t('qrCodes.empty')}
+					</p>
+				) : (
+					<>
+						{/* Mobile: card list */}
+						<div className="md:hidden">
+							{qrCodes.map((qr) => (
+								<QRCard
+									key={qr.id}
+									qr={qr}
+									onView={() => setDialogQR(qr)}
+									onEdit={() => openEditForm(qr)}
+									onDelete={() => handleDelete(qr.id)}
+									canEdit={canEdit}
+									canDeleteThis={canDeleteQR(qr)}
+								/>
+							))}
+						</div>
+
+						{/* Desktop: table */}
+						<div className="hidden md:block overflow-x-auto">
+							<table className="w-full text-sm">
+								<thead>
+									<tr className="border-b bg-muted/50">
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											{t('common.name')}
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											{t('qrCodes.mediumLabel')}
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											{t('common.location')}
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											{t('common.created')}
+										</th>
+										<th className="px-5 py-3 text-left font-medium text-muted-foreground">
+											{t('common.actions')}
+										</th>
+									</tr>
+								</thead>
+								<tbody>
+									{qrCodes.map((qr) => (
+										<tr
+											key={qr.id}
+											className="border-b last:border-0 hover:bg-muted/30 transition-colors"
+										>
+											<td className="px-5 py-3">{qr.name}</td>
+											<td className="px-5 py-3 text-muted-foreground">
+												{qr.medium}
+											</td>
+											<td className="px-5 py-3">
+												<span className="flex items-center gap-1.5">
+													<MapPin className="h-3.5 w-3.5 text-muted-foreground" />
+													{qr.location}
+												</span>
+											</td>
+											<td className="px-5 py-3 text-muted-foreground">
+												{qr.createdAt
+													? new Date(qr.createdAt).toLocaleString()
+													: '-'}
+											</td>
+											<td className="px-5 py-3">
+												<div className="flex items-center gap-2">
+													<button
+														type="button"
+														onClick={() => setDialogQR(qr)}
+														className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
+													>
+														<QrCode className="h-3 w-3" />
+														{t('common.show')}
+													</button>
+													{canEdit && (
+														<button
+															type="button"
+															onClick={() => openEditForm(qr)}
+															className="flex items-center gap-1 rounded-md border px-2 py-1 text-xs hover:bg-muted/50 transition-colors"
+														>
+															<Pencil className="h-3 w-3" />
+															{t('common.edit')}
+														</button>
+													)}
+													{canDeleteQR(qr) && (
+														<button
+															type="button"
+															onClick={() => handleDelete(qr.id)}
+															className="flex items-center gap-1 rounded-md border border-destructive/30 px-2 py-1 text-xs text-destructive hover:bg-destructive/10 transition-colors"
+														>
+															<Trash2 className="h-3 w-3" />
+															{t('common.delete')}
+														</button>
+													)}
 												</div>
-											) : null}
-											<div className="flex gap-1">
-												<dt>{t('common.created')}:</dt>
-												<dd>{formatDateTime(qr.createdAt, locale)}</dd>
-											</div>
-										</dl>
-									</div>
-								</div>
+											</td>
+										</tr>
+									))}
+								</tbody>
+							</table>
+						</div>
 
-								<div className="mt-3 grid grid-cols-2 gap-2 sm:flex sm:flex-wrap sm:justify-end">
-									<button
-										type="button"
-										onClick={() => setDialogQR(qr)}
-										className={btnRow}
-									>
-										<QrCodeIcon className="h-3.5 w-3.5" />
-										{t('qrCodes.showButton')}
-									</button>
-									{canEdit && (
-										<button
-											type="button"
-											onClick={() => openEdit(qr)}
-											className={btnRow}
-										>
-											<Pencil className="h-3.5 w-3.5" />
-											{t('common.edit')}
-										</button>
-									)}
-									{canDeleteQR(qr) && (
-										<button
-											type="button"
-											onClick={() => setConfirmTarget(qr)}
-											disabled={deletingId === qr.id}
-											className={btnRowDestructive}
-										>
-											{deletingId === qr.id ? (
-												<Loader2 className="h-3.5 w-3.5 animate-spin" />
-											) : (
-												<Trash2 className="h-3.5 w-3.5" />
-											)}
-											{t('common.delete')}
-										</button>
-									)}
-								</div>
-							</li>
-						))}
-					</ul>
+						<Pagination
+							currentPage={currentPage}
+							totalPages={totalPages}
+							total={total}
+							onPageChange={setCurrentPage}
+						/>
+					</>
 				)}
-
-				{/* Outside the non-empty branch. On this page the pagination used to be
-				    rendered *inside* it, so emptying a page removed the only control
-				    that could get you off it. */}
-				{!list.error && !showEmpty ? (
-					<Pagination
-						page={list.page}
-						totalPages={list.totalPages}
-						total={list.total}
-						pageSize={PAGE_SIZE}
-						shownCount={list.items.length}
-						isLoading={list.isLoading}
-						onPageChange={list.setPage}
-					/>
-				) : null}
 			</div>
 
-			<Modal
-				open={formOpen}
-				onClose={requestCloseForm}
-				title={
-					editing
-						? t('qrCodes.editFormTitleNamed', { name: editing.name })
-						: t('qrCodes.newFormTitle')
-				}
-				dismissible={!isSaving}
-				footer={
-					<div className="grid grid-cols-2 gap-2">
-						<button
-							type="button"
-							onClick={requestCloseForm}
-							disabled={isSaving}
-							className={btnSecondary}
-						>
-							{t('common.cancel')}
-						</button>
-						<button
-							type="submit"
-							form="qr-form"
-							disabled={isSaving}
-							className={btnPrimary}
-						>
-							{isSaving && <Loader2 className="h-4 w-4 animate-spin" />}
-							{isSaving
-								? t('common.saving')
-								: editing
-									? t('common.save')
-									: t('common.add')}
-						</button>
-					</div>
-				}
-			>
-				<form
-					id="qr-form"
-					onSubmit={handleSubmit}
-					noValidate
-					className="space-y-4"
-				>
-					<div className="space-y-1.5">
-						<label htmlFor="qrName" className={labelBase}>
-							{t('qrCodes.nameLabel')}{' '}
-							<span className="text-destructive">*</span>
-						</label>
-						<input
-							id="qrName"
-							type="text"
-							value={name}
-							onChange={(e) => setName(e.target.value)}
-							onBlur={() => setName((v) => v.trim())}
-							placeholder={t('qrCodes.namePlaceholder')}
-							maxLength={FIELD_MAX}
-							disabled={isSaving}
-							aria-invalid={errors.name ? true : undefined}
-							aria-describedby={errors.name ? 'qrName-error' : undefined}
-							className={inputBase}
-						/>
-						{errors.name ? (
-							<p id="qrName-error" className={fieldErrorText}>
-								{errors.name}
-							</p>
-						) : (
-							<p className="text-xs text-muted-foreground">
-								{t('qrCodes.nameHint')}
-							</p>
-						)}
-					</div>
-
-					<div className="space-y-1.5">
-						<label htmlFor="qrMedium" className={labelBase}>
-							{t('qrCodes.mediumLabel')}{' '}
-							<span className="text-destructive">*</span>
-						</label>
-						<input
-							id="qrMedium"
-							type="text"
-							value={medium}
-							onChange={(e) => setMedium(e.target.value)}
-							onBlur={() => setMedium((v) => v.trim())}
-							placeholder={t('qrCodes.mediumPlaceholder')}
-							maxLength={FIELD_MAX}
-							disabled={isSaving}
-							aria-invalid={errors.medium ? true : undefined}
-							aria-describedby={errors.medium ? 'qrMedium-error' : undefined}
-							className={inputBase}
-						/>
-						{errors.medium ? (
-							<p id="qrMedium-error" className={fieldErrorText}>
-								{errors.medium}
-							</p>
-						) : null}
-					</div>
-
-					<div className="space-y-1.5">
-						<label htmlFor="qrLocation" className={labelBase}>
-							{t('qrCodes.locationLabel')}{' '}
-							<span className="font-normal text-muted-foreground">
-								({t('common.optional')})
-							</span>
-						</label>
-						<input
-							id="qrLocation"
-							type="text"
-							value={location}
-							onChange={(e) => setLocation(e.target.value)}
-							onBlur={() => setLocation((v) => v.trim())}
-							placeholder={t('qrCodes.locationPlaceholder')}
-							maxLength={FIELD_MAX}
-							disabled={isSaving}
-							aria-invalid={errors.location ? true : undefined}
-							aria-describedby={
-								errors.location ? 'qrLocation-error' : undefined
-							}
-							className={inputBase}
-						/>
-						{errors.location ? (
-							<p id="qrLocation-error" className={fieldErrorText}>
-								{errors.location}
-							</p>
-						) : null}
-					</div>
-				</form>
-			</Modal>
-
-			<ConfirmDialog
-				open={confirmTarget !== null}
-				title={t('qrCodes.deleteTitle')}
-				body={t('qrCodes.deleteBody', { name: confirmTarget?.name ?? '' })}
-				confirmLabel={t('common.delete')}
-				pending={deletingId !== null}
-				onConfirm={() => void handleConfirmDelete()}
-				onCancel={() => setConfirmTarget(null)}
-			/>
-
-			{dialogQR ? (
-				<QRDialog
-					qr={dialogQR}
-					fallbackKey={effectiveFallbackKey}
-					onClose={() => setDialogQR(null)}
-				/>
-			) : null}
+			{dialogQR && <QRDialog qr={dialogQR} onClose={() => setDialogQR(null)} />}
 		</div>
 	);
 }

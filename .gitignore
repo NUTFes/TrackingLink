@@ -11,10 +11,6 @@ worker-configuration.d.ts
 *.log
 *.tsbuildinfo
 
-# D1 exports. These contain real access logs, including raw IP addresses, so they
-# must never be committed — take them, keep them off the machine, delete them.
-backup-*.sql
-
 # Editor / IDE
 .idea
 
