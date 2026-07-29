@@ -28,7 +28,7 @@ import {
 import { useListQuery } from '../hooks/useListQuery';
 import { Permissions, hasPermission } from '../hooks/useStaffAuth';
 import { ApiError, assertOk, authFetch } from '../lib/api';
-import { downloadBlob } from '../lib/download';
+import { downloadBlob, filenameFromResponse } from '../lib/download';
 import { formatDateTime, slugForFilename } from '../lib/format';
 import { useTranslation } from '../lib/i18n';
 import { deriveFallbackKey } from '../lib/qr';
@@ -168,6 +168,10 @@ function ManageProjectsContent() {
 	const list = useListQuery<Project>(buildUrl, PAGE_SIZE);
 
 	const [pending, setPending] = useState<PendingAction>(null);
+	// Selection for the combined CSV export. Kept as ids rather than projects so a
+	// list refresh cannot leave stale copies of renamed rows in here.
+	const [selectedIds, setSelectedIds] = useState<string[]>([]);
+	const [isBulkDownloading, setIsBulkDownloading] = useState(false);
 	const [editing, setEditing] = useState<Project | null>(null);
 	const [editName, setEditName] = useState('');
 	const [editUrl, setEditUrl] = useState('');
@@ -302,6 +306,55 @@ function ManageProjectsContent() {
 		}
 	};
 
+	const toggleSelected = (projectId: string) => {
+		setSelectedIds((current) =>
+			current.includes(projectId)
+				? current.filter((id) => id !== projectId)
+				: [...current, projectId],
+		);
+	};
+
+	// Only the rows currently on screen. "Select all" that silently reached other
+	// pages would let one click request a CSV far larger than what the user can see.
+	const pageIds = list.items.map((project) => project.projectId);
+	const allOnPageSelected =
+		pageIds.length > 0 && pageIds.every((id) => selectedIds.includes(id));
+
+	const toggleSelectAllOnPage = () => {
+		setSelectedIds((current) =>
+			allOnPageSelected
+				? current.filter((id) => !pageIds.includes(id))
+				: [...new Set([...current, ...pageIds])],
+		);
+	};
+
+	const handleDownloadSelectedCsv = async () => {
+		if (selectedIds.length === 0) return;
+		setIsBulkDownloading(true);
+		try {
+			const res = await authFetch(
+				`${TRACKING_LINK_API_URL}/projects/access-logs/csv?projectIds=${selectedIds
+					.map(encodeURIComponent)
+					.join(',')}`,
+			);
+			await assertOk(res);
+			const blob = await res.blob();
+			// The server names the file (it knows the project names and the row range);
+			// this only supplies the fallback for the rare case where the header is
+			// missing, since downloadBlob needs some name.
+			downloadBlob(
+				blob,
+				filenameFromResponse(res) ??
+					`${slugForFilename('access-logs', String(selectedIds.length))}.csv`,
+			);
+			setSelectedIds([]);
+		} catch (err) {
+			toast.error(describeError(err));
+		} finally {
+			setIsBulkDownloading(false);
+		}
+	};
+
 	const handleConfirmDelete = async () => {
 		if (!confirmTarget) return;
 		const target = confirmTarget;
@@ -386,65 +439,120 @@ function ManageProjectsContent() {
 						)}
 					</div>
 				) : (
-					<ul className="divide-y divide-border">
-						{list.items.map((project) => (
-							<li
-								key={project.projectId}
-								className="p-4 transition-colors hover:bg-muted/30"
-							>
-								<div className="mb-2 flex items-start justify-between gap-3">
-									<p className="min-w-0 break-words text-sm font-medium leading-snug">
-										{project.name}
-									</p>
-									<span className="flex shrink-0 items-center gap-3 text-xs tabular-nums text-muted-foreground">
-										{/* Labelled text, not a `title` attribute: title is
+					<>
+						{canAnalytics ? (
+							<div className="flex flex-wrap items-center justify-between gap-3 border-b bg-muted/20 px-4 py-2">
+								<label className="flex cursor-pointer items-center gap-2 text-xs">
+									<input
+										type="checkbox"
+										checked={allOnPageSelected}
+										onChange={toggleSelectAllOnPage}
+										className="h-4 w-4 cursor-pointer accent-primary"
+									/>
+									{t('projects.selectAllOnPage')}
+								</label>
+								<div className="flex items-center gap-3">
+									{/* aria-live so the count is announced as boxes are ticked —
+								    otherwise there is no feedback that the button's target
+								    changed. */}
+									<span
+										aria-live="polite"
+										className="text-xs tabular-nums text-muted-foreground"
+									>
+										{t('projects.selectedCount', {
+											count: String(selectedIds.length),
+										})}
+									</span>
+									<button
+										type="button"
+										onClick={() => void handleDownloadSelectedCsv()}
+										disabled={selectedIds.length === 0 || isBulkDownloading}
+										className={btnSecondary}
+									>
+										{isBulkDownloading ? (
+											<Loader2
+												className="h-4 w-4 animate-spin"
+												aria-hidden="true"
+											/>
+										) : (
+											<Download className="h-4 w-4" aria-hidden="true" />
+										)}
+										{t('projects.downloadSelectedCsv')}
+									</button>
+								</div>
+							</div>
+						) : null}
+						<ul className="divide-y divide-border">
+							{list.items.map((project) => (
+								<li
+									key={project.projectId}
+									className="p-4 transition-colors hover:bg-muted/30"
+								>
+									<div className="mb-2 flex items-start justify-between gap-3">
+										{canAnalytics ? (
+											<input
+												type="checkbox"
+												checked={selectedIds.includes(project.projectId)}
+												onChange={() => toggleSelected(project.projectId)}
+												aria-label={t('projects.selectFor', {
+													name: project.name,
+												})}
+												className="mt-0.5 h-4 w-4 shrink-0 cursor-pointer accent-primary"
+											/>
+										) : null}
+										<p className="min-w-0 flex-1 break-words text-sm font-medium leading-snug">
+											{project.name}
+										</p>
+										<span className="flex shrink-0 items-center gap-3 text-xs tabular-nums text-muted-foreground">
+											{/* Labelled text, not a `title` attribute: title is
 										    unavailable on touch and inconsistently exposed to
 										    assistive tech, so these numbers were unlabelled on the
 										    device this app is used on. */}
-										<span className="flex items-center gap-1">
-											<QrCode className="h-3.5 w-3.5" aria-hidden="true" />
-											<span className="sr-only">
-												{t('common.qrCodeCount')}:{' '}
+											<span className="flex items-center gap-1">
+												<QrCode className="h-3.5 w-3.5" aria-hidden="true" />
+												<span className="sr-only">
+													{t('common.qrCodeCount')}:{' '}
+												</span>
+												{project.qrCodeCount.toLocaleString()}
 											</span>
-											{project.qrCodeCount.toLocaleString()}
+											<span className="flex items-center gap-1">
+												<ScanLine className="h-3.5 w-3.5" aria-hidden="true" />
+												<span className="sr-only">{t('common.scans')}: </span>
+												{project.accessCount.toLocaleString()}
+											</span>
 										</span>
-										<span className="flex items-center gap-1">
-											<ScanLine className="h-3.5 w-3.5" aria-hidden="true" />
-											<span className="sr-only">{t('common.scans')}: </span>
-											{project.accessCount.toLocaleString()}
+									</div>
+
+									<a
+										href={project.destinationUrl}
+										target="_blank"
+										rel="noopener noreferrer"
+										className="mb-3 flex min-w-0 items-center gap-1 text-xs text-primary hover:underline"
+									>
+										<span className="truncate">{project.destinationUrl}</span>
+										<ExternalLink className="h-3 w-3 shrink-0" />
+									</a>
+
+									<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+										<span className="text-xs text-muted-foreground">
+											{t('common.created')}:{' '}
+											{formatDateTime(project.createdAt, locale)}
 										</span>
-									</span>
-								</div>
-
-								<a
-									href={project.destinationUrl}
-									target="_blank"
-									rel="noopener noreferrer"
-									className="mb-3 flex min-w-0 items-center gap-1 text-xs text-primary hover:underline"
-								>
-									<span className="truncate">{project.destinationUrl}</span>
-									<ExternalLink className="h-3 w-3 shrink-0" />
-								</a>
-
-								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-									<span className="text-xs text-muted-foreground">
-										{t('common.created')}:{' '}
-										{formatDateTime(project.createdAt, locale)}
-									</span>
-									<ProjectRowActions
-										project={project}
-										canEdit={canEdit}
-										canAnalytics={canAnalytics}
-										canDelete={canDelete}
-										pending={pending}
-										onEdit={() => openEdit(project)}
-										onDownloadCsv={() => void handleDownloadCsv(project)}
-										onDelete={() => setConfirmTarget(project)}
-									/>
-								</div>
-							</li>
-						))}
-					</ul>
+										<ProjectRowActions
+											project={project}
+											canEdit={canEdit}
+											canAnalytics={canAnalytics}
+											canDelete={canDelete}
+											pending={pending}
+											onEdit={() => openEdit(project)}
+											onDownloadCsv={() => void handleDownloadCsv(project)}
+											onDelete={() => setConfirmTarget(project)}
+										/>
+									</div>
+								</li>
+							))}
+						</ul>
+					</>
 				)}
 
 				{!list.error && !showEmpty ? (

@@ -69,7 +69,7 @@ const en: Dictionary = {
 	'validation.tooLong': 'Please use {max} characters or fewer.',
 	'validation.url': 'Enter a URL starting with http:// or https://',
 	'validation.fallbackKey':
-		'Use lowercase letters, digits and hyphens only, starting with a letter or digit.',
+		'Use lowercase letters, digits, hyphens and underscores only, starting with a letter or digit.',
 
 	'login.sessionExpired': 'Your session expired. Please sign in again.',
 	'login.retryAfterNetwork':
@@ -128,6 +128,10 @@ const en: Dictionary = {
 	'projects.fallbackKeyOrphanedOption': '{key} (not in the configuration)',
 	'projects.fallbackKeyListUnavailable':
 		'Could not load the configured destinations. Enter the keyword manually.',
+	'projects.selectFor': 'Include {name} in the CSV export',
+	'projects.selectAllOnPage': 'Select all on this page',
+	'projects.selectedCount': '{count} selected',
+	'projects.downloadSelectedCsv': 'Download selected as CSV',
 
 	'createProject.heading': 'New project',
 	'createProject.subtitle': 'Create a new TrackingLink project',
@@ -170,6 +174,12 @@ const en: Dictionary = {
 	'qrCodes.scanUrlLabel': 'This code links to',
 	'qrCodes.generateFailed': 'Failed to generate the QR code',
 	'qrCodes.downloadButton': 'Download PNG',
+	'qrCodes.scanCount': '{count} scans',
+	'qrCodes.scanCountTitle': 'Scans recorded for this code',
+	'qrCodes.captionLegend': 'Text printed under the code',
+	'qrCodes.captionHint': 'Printed under the code in the downloaded PNG.',
+	'qrCodes.captionHintNone':
+		'The downloaded PNG will contain the code only, with no text.',
 
 	'csvExport.downloadFailed': 'Failed to download the CSV',
 	'csvExport.disabled': 'CSV export is not enabled yet',
@@ -230,7 +240,7 @@ const ja: Dictionary = {
 	'validation.tooLong': '{max}文字以内で入力してください。',
 	'validation.url': 'http:// または https:// で始まるURLを入力してください。',
 	'validation.fallbackKey':
-		'半角の英小文字・数字・ハイフンのみ、先頭は英数字で入力してください。',
+		'半角の英小文字・数字・ハイフン・アンダーバーのみ、先頭は英数字で入力してください。',
 
 	'login.sessionExpired':
 		'セッションの有効期限が切れました。再度ログインしてください。',
@@ -290,6 +300,10 @@ const ja: Dictionary = {
 	'projects.fallbackKeyOrphanedOption': '{key}(設定にありません)',
 	'projects.fallbackKeyListUnavailable':
 		'設定されている転送先を読み込めませんでした。キーワードを手で入力してください。',
+	'projects.selectFor': '{name} をCSV出力に含める',
+	'projects.selectAllOnPage': 'このページを全選択',
+	'projects.selectedCount': '{count} 件選択中',
+	'projects.downloadSelectedCsv': '選択分をCSVでDL',
 
 	'createProject.heading': 'プロジェクト作成',
 	'createProject.subtitle': '新しいTrackingLinkプロジェクトを作成します。',
@@ -332,6 +346,12 @@ const ja: Dictionary = {
 	'qrCodes.scanUrlLabel': 'このコードの転送先',
 	'qrCodes.generateFailed': 'QRコードの生成に失敗しました',
 	'qrCodes.downloadButton': 'PNGをダウンロード',
+	'qrCodes.scanCount': '{count} 回',
+	'qrCodes.scanCountTitle': 'このQRコードのアクセス数',
+	'qrCodes.captionLegend': 'QRコードの下に入れる文字',
+	'qrCodes.captionHint': 'ダウンロードするPNGのQRコードの下に印字されます。',
+	'qrCodes.captionHintNone':
+		'ダウンロードするPNGにはQRコードだけが入り、文字は入りません。',
 
 	'csvExport.downloadFailed': 'CSVのダウンロードに失敗しました',
 	'csvExport.disabled': 'CSVダウンロード機能は現在無効です',

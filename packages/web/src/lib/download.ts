@@ -12,6 +12,37 @@
  * Safari, where it tends to navigate in-tab instead of saving and so destroys the
  * dialog state behind it.
  */
+/**
+ * Reads the filename the server chose out of Content-Disposition.
+ *
+ * Needed because `fetch` + blob saves under whatever name the client passes, so
+ * the header the API carefully builds is otherwise thrown away. The server is the
+ * only side that knows the full picture for a combined export — how many projects
+ * were included and what date range came back — so it should win.
+ *
+ * Prefers the RFC 5987 `filename*=UTF-8''…` form over the ASCII `filename="…"`
+ * fallback, which is the whole reason the API sends both: the fallback has every
+ * Japanese character replaced with an underscore.
+ *
+ * Returns null rather than guessing, so the caller keeps its own default.
+ */
+export function filenameFromResponse(response: Response): string | null {
+	const header = response.headers.get('Content-Disposition');
+	if (!header) return null;
+
+	const utf8 = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+	if (utf8?.[1]) {
+		try {
+			return decodeURIComponent(utf8[1].trim()) || null;
+		} catch {
+			// Malformed percent-encoding: fall through to the ASCII form.
+		}
+	}
+
+	const ascii = /filename\s*=\s*"([^"]*)"/i.exec(header);
+	return ascii?.[1]?.trim() || null;
+}
+
 export function downloadBlob(blob: Blob, filename: string): void {
 	const url = URL.createObjectURL(blob);
 	const anchor = document.createElement('a');
