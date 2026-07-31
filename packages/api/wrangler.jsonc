@@ -13,6 +13,16 @@
 	// Custom domain / route the redirect endpoint should live on.
 	// Leave this out entirely to use the workers.dev subdomain instead.
 	// "routes": [{ "pattern": "links.example.com", "custom_domain": true }],
+	//
+	// t.nutfes.net is attached to this Worker as a Custom Domain in the Cloudflare
+	// dashboard, not here — declaring it in both places is how you get a deploy
+	// that fights the dashboard. It is the host printed into QR codes; see
+	// VITE_FWD_BASE_URL in packages/web/.env.production for why (20 characters
+	// against 50, which is 37x37 modules instead of 49x49).
+	//
+	// Do not disable the workers.dev subdomain. QR codes printed before the custom
+	// domain existed carry it, and both hostnames have to keep resolving for as
+	// long as that paper is on a wall.
 	// Rate limiter for POST /auth/login. `unsafe` bindings are excluded from
 	// `wrangler types`, so the interface is declared by hand in src/auth/types.ts.
 	// The limiter is per-colo, not global — plenty for an admin panel.
