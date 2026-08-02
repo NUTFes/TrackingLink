@@ -96,8 +96,11 @@ export function qrTargetUrl(qr: QrLinkIdentity, fallbackKey = ''): string {
 	return fallbackKey ? `${base}&p=${encodeURIComponent(fallbackKey)}` : base;
 }
 
+/** The formats a QR code can be downloaded as. */
+export type QrImageFormat = 'png' | 'svg';
+
 /**
- * Filename for a downloaded QR code PNG: `<name>_QR.png`.
+ * Filename for a downloaded QR code: `<name>_QR.<format>`.
  *
  * Only the name goes in. The medium and location were in here as well, which
  * buried the one part anyone actually scans a folder for behind two fields that
@@ -106,11 +109,11 @@ export function qrTargetUrl(qr: QrLinkIdentity, fallbackKey = ''): string {
  * Extracted rather than inlined for the same reason as qrTargetUrl: a bulk-print
  * view will need exactly this, and the two must not drift.
  */
-export function qrPngFileName(name: string): string {
+export function qrFileName(name: string, format: QrImageFormat): string {
 	// 'QR' is passed as a part rather than appended, so the separator collapsing
 	// in slugForFilename applies to it too — a blank name gives "QR.png", not
 	// "_QR.png".
-	return `${slugForFilename(name, 'QR')}.png`;
+	return `${slugForFilename(name, 'QR')}.${format}`;
 }
 
 /** On-screen preview. */
@@ -122,10 +125,51 @@ export function qrPreviewDataUrl(text: string): Promise<string> {
 	});
 }
 
-const PNG_QR_SIZE = 640;
-const PNG_PADDING = 32;
+/**
+ * Geometry shared by both download formats — deliberately not prefixed per
+ * format. The PNG and the SVG have to come out at the same size with the same
+ * margins, or "the same image in another format" stops being true and swapping
+ * one for the other in a poster file means redoing the placement.
+ */
+const QR_SIZE = 640;
+const PADDING = 32;
 const CAPTION_LINE_HEIGHT = 34;
 const CAPTION_FONT_SIZE = 24;
+/**
+ * Font stack for the caption. Only the SVG needs it spelled out — a data file is
+ * opened somewhere other than a browser, so the chain has to name real fonts
+ * rather than rely on `system-ui` resolving.
+ */
+const CAPTION_FONT_FAMILY =
+	"system-ui, -apple-system, 'Segoe UI', 'Helvetica Neue', 'Hiragino Sans', 'Noto Sans JP', 'Yu Gothic', sans-serif";
+/**
+ * Top edge of a caption line to its baseline, ~0.8em at the sizes used here. The
+ * canvas path sets textBaseline='top' and has no need for it; the SVG path
+ * positions text on the alphabetic baseline and does — see qrSvgString.
+ */
+const CAPTION_BASELINE_OFFSET = Math.round(CAPTION_FONT_SIZE * 0.8);
+
+/**
+ * The single place either format's page size is decided.
+ *
+ * `qrSize` is passed in rather than assumed to equal QR_SIZE so the margin comes
+ * out at exactly PADDING on all four sides of whatever the renderer actually
+ * produced — the canvas renderer floors its own dimensions internally.
+ */
+function qrImageLayout(qrSize: number, lineCount: number) {
+	const width = qrSize + PADDING * 2;
+	return {
+		width,
+		height:
+			qrSize +
+			PADDING * 2 +
+			(lineCount ? lineCount * CAPTION_LINE_HEIGHT + PADDING / 2 : 0),
+		/** Top edge of the first caption line. */
+		captionTop: qrSize + PADDING + PADDING / 2,
+		/** A caption line wider than this gets an ellipsis. */
+		maxTextWidth: width - PADDING * 2,
+	};
+}
 
 /** One printed line beneath the QR code. */
 export interface QrCaptionLine {
@@ -185,12 +229,43 @@ export function qrCaptionLines(
 	return lines;
 }
 
+/** Font shorthand for a caption line, shared by the measuring and canvas paths. */
+function captionFont(emphasis: boolean | undefined): string {
+	return `${emphasis ? '600 ' : ''}${CAPTION_FONT_SIZE}px ${CAPTION_FONT_FAMILY}`;
+}
+
+/**
+ * A context kept solely for measureText.
+ *
+ * The SVG path has no canvas of its own but still needs text widths to decide
+ * where to truncate, and it has to agree with the PNG path or the two formats
+ * truncate at different points. Null where no 2D context exists (jsdom, which
+ * implements none) — an untruncated caption is a far better failure than no SVG at
+ * all, and it is what makes qrSvgString unit-testable.
+ *
+ * Resolved once: whether a context is obtainable cannot change during a session,
+ * and a fresh canvas per caption line is pure waste.
+ */
+let cachedMeasureContext: CanvasRenderingContext2D | null | undefined;
+function measureContext(): CanvasRenderingContext2D | null {
+	if (cachedMeasureContext === undefined) {
+		try {
+			cachedMeasureContext = document.createElement('canvas').getContext('2d');
+		} catch {
+			cachedMeasureContext = null;
+		}
+	}
+	return cachedMeasureContext;
+}
+
 /** Shortens a caption line to fit the image width, with an ellipsis. */
 function fitText(
-	ctx: CanvasRenderingContext2D,
+	ctx: CanvasRenderingContext2D | null,
 	text: string,
 	maxWidth: number,
 ): string {
+	// No way to measure means no way to know where to cut. See measureContext.
+	if (!ctx) return text;
 	if (ctx.measureText(text).width <= maxWidth) return text;
 	let low = 0;
 	let high = text.length;
@@ -220,18 +295,16 @@ export async function qrPngBlob(
 ): Promise<Blob> {
 	const qrCanvas = document.createElement('canvas');
 	await QRCodeLib.toCanvas(qrCanvas, text, {
-		width: PNG_QR_SIZE,
+		width: QR_SIZE,
 		margin: 2,
 		errorCorrectionLevel: 'H',
 	});
 
 	const lines = captionLines.filter((line) => line.text);
+	const layout = qrImageLayout(qrCanvas.width, lines.length);
 	const canvas = document.createElement('canvas');
-	canvas.width = qrCanvas.width + PNG_PADDING * 2;
-	canvas.height =
-		qrCanvas.height +
-		PNG_PADDING * 2 +
-		(lines.length ? lines.length * CAPTION_LINE_HEIGHT + PNG_PADDING / 2 : 0);
+	canvas.width = layout.width;
+	canvas.height = layout.height;
 
 	const ctx = canvas.getContext('2d');
 	if (!ctx) throw new Error('Canvas 2D context unavailable');
@@ -240,17 +313,20 @@ export async function qrPngBlob(
 	// scanners need the quiet zone to actually be light.
 	ctx.fillStyle = '#ffffff';
 	ctx.fillRect(0, 0, canvas.width, canvas.height);
-	ctx.drawImage(qrCanvas, PNG_PADDING, PNG_PADDING);
+	ctx.drawImage(qrCanvas, PADDING, PADDING);
 
 	if (lines.length) {
 		ctx.fillStyle = '#000000';
 		ctx.textAlign = 'center';
 		ctx.textBaseline = 'top';
-		const maxWidth = canvas.width - PNG_PADDING * 2;
-		let y = qrCanvas.height + PNG_PADDING + PNG_PADDING / 2;
+		let y = layout.captionTop;
 		for (const line of lines) {
-			ctx.font = `${line.emphasis ? '600 ' : ''}${CAPTION_FONT_SIZE}px system-ui, sans-serif`;
-			ctx.fillText(fitText(ctx, line.text, maxWidth), canvas.width / 2, y);
+			ctx.font = captionFont(line.emphasis);
+			ctx.fillText(
+				fitText(ctx, line.text, layout.maxTextWidth),
+				canvas.width / 2,
+				y,
+			);
 			y += CAPTION_LINE_HEIGHT;
 		}
 	}
@@ -260,5 +336,88 @@ export async function qrPngBlob(
 			if (blob) resolve(blob);
 			else reject(new Error('Failed to encode the QR code as PNG'));
 		}, 'image/png');
+	});
+}
+
+/** Escapes a caption for an SVG text node. A name may legitimately contain `&`. */
+function escapeXmlText(text: string): string {
+	return text
+		.replace(/&/g, '&amp;')
+		.replace(/</g, '&lt;')
+		.replace(/>/g, '&gt;');
+}
+
+/**
+ * Renders a QR code to an SVG document, laid out identically to qrPngBlob.
+ *
+ * The point of the vector form is print: a 640px PNG placed on an A1 poster is
+ * enlarged past its resolution, and softened module edges cost real scan
+ * reliability at distance. This output stays sharp at any size and drops straight
+ * into Illustrator or Inkscape.
+ *
+ * The caption is emitted as live <text>, which makes it editable in a vector
+ * editor but leaves its glyphs to whatever font that machine resolves from
+ * CAPTION_FONT_FAMILY. Only the caption is affected; the code itself is paths.
+ */
+export async function qrSvgString(
+	text: string,
+	captionLines: QrCaptionLine[] = [],
+): Promise<string> {
+	// The library hands back a complete <svg> element — xmlns, viewBox in module
+	// units, shape-rendering="crispEdges", and width/height equal to QR_SIZE
+	// verbatim. Nesting that element and giving it an x/y is valid SVG 1.1 and
+	// understood by browsers and vector editors alike, so this rides on the
+	// library's own path generation instead of re-deriving modules into <rect>s.
+	const qrSvg = (
+		await QRCodeLib.toString(text, {
+			type: 'svg',
+			width: QR_SIZE,
+			margin: 2,
+			errorCorrectionLevel: 'H',
+		})
+	).trim();
+
+	const lines = captionLines.filter((line) => line.text);
+	const layout = qrImageLayout(QR_SIZE, lines.length);
+	const ctx = measureContext();
+
+	const caption = lines.map((line, index) => {
+		if (ctx) ctx.font = captionFont(line.emphasis);
+		// Positioned on the default alphabetic baseline rather than with
+		// dominant-baseline="text-before-edge", which browsers honour but vector
+		// editors interpret inconsistently. An explicit number renders the same
+		// everywhere.
+		const y =
+			layout.captionTop + CAPTION_BASELINE_OFFSET + index * CAPTION_LINE_HEIGHT;
+		const weight = line.emphasis ? ' font-weight="600"' : '';
+		return (
+			`<text x="${layout.width / 2}" y="${y}" text-anchor="middle" ` +
+			`font-family="${CAPTION_FONT_FAMILY}" font-size="${CAPTION_FONT_SIZE}"${weight} ` +
+			`fill="#000000">${escapeXmlText(fitText(ctx, line.text, layout.maxTextWidth))}</text>`
+		);
+	});
+
+	return [
+		`<svg xmlns="http://www.w3.org/2000/svg" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">`,
+		// Same reason as the canvas fill above: the quiet zone has to actually be
+		// light, and a transparent SVG prints as nothing.
+		`<rect width="${layout.width}" height="${layout.height}" fill="#ffffff"/>`,
+		qrSvg.replace('<svg ', `<svg x="${PADDING}" y="${PADDING}" `),
+		...caption,
+		'</svg>',
+	].join('\n');
+}
+
+/** The downloadable file for either format, ready for downloadBlob. */
+export async function qrImageBlob(
+	format: QrImageFormat,
+	text: string,
+	captionLines: QrCaptionLine[] = [],
+): Promise<Blob> {
+	if (format === 'png') return qrPngBlob(text, captionLines);
+	// charset is spelled out because captions are routinely Japanese and a
+	// consumer that guesses latin-1 renders them as mojibake.
+	return new Blob([await qrSvgString(text, captionLines)], {
+		type: 'image/svg+xml;charset=utf-8',
 	});
 }

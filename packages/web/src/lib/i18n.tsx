@@ -182,12 +182,13 @@ const en: Dictionary = {
 		'Could not copy. Copying needs an https or localhost address — select the link and copy it by hand.',
 	'qrCodes.generateFailed': 'Failed to generate the QR code',
 	'qrCodes.downloadButton': 'Download PNG',
+	'qrCodes.downloadSvgButton': 'Download SVG',
 	'qrCodes.scanCount': '{count} scans',
 	'qrCodes.scanCountTitle': 'Scans recorded for this code',
 	'qrCodes.captionLegend': 'Text printed under the code',
-	'qrCodes.captionHint': 'Printed under the code in the downloaded PNG.',
+	'qrCodes.captionHint': 'Printed under the code in the downloaded image.',
 	'qrCodes.captionHintNone':
-		'The downloaded PNG will contain the code only, with no text.',
+		'The downloaded image will contain the code only, with no text.',
 
 	'csvExport.downloadFailed': 'Failed to download the CSV',
 	'csvExport.disabled': 'CSV export is not enabled yet',
@@ -362,12 +363,13 @@ const ja: Dictionary = {
 		'コピーできませんでした。コピーには https か localhost のアドレスが必要です。リンクを選択して手動でコピーしてください。',
 	'qrCodes.generateFailed': 'QRコードの生成に失敗しました',
 	'qrCodes.downloadButton': 'PNGをダウンロード',
+	'qrCodes.downloadSvgButton': 'SVGをダウンロード',
 	'qrCodes.scanCount': '{count} 回',
 	'qrCodes.scanCountTitle': 'このQRコードのアクセス数',
 	'qrCodes.captionLegend': 'QRコードの下に入れる文字',
-	'qrCodes.captionHint': 'ダウンロードするPNGのQRコードの下に印字されます。',
+	'qrCodes.captionHint': 'ダウンロードする画像のQRコードの下に印字されます。',
 	'qrCodes.captionHintNone':
-		'ダウンロードするPNGにはQRコードだけが入り、文字は入りません。',
+		'ダウンロードする画像にはQRコードだけが入り、文字は入りません。',
 
 	'csvExport.downloadFailed': 'CSVのダウンロードに失敗しました',
 	'csvExport.disabled': 'CSVダウンロード機能は現在無効です',

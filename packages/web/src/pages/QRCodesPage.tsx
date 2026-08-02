@@ -35,11 +35,12 @@ import { useTranslation } from '../lib/i18n';
 import {
 	QR_CAPTION_DEFAULTS,
 	type QrCaptionOptions,
+	type QrImageFormat,
 	type QrLinkIdentity,
 	deriveFallbackKey,
 	qrCaptionLines,
-	qrPngBlob,
-	qrPngFileName,
+	qrFileName,
+	qrImageBlob,
 	qrPreviewDataUrl,
 	qrTargetUrl,
 } from '../lib/qr';
@@ -205,7 +206,8 @@ function QRDialog({
 		[qr.id, qr.shortCode, fallbackKey],
 	);
 	const { dataUrl, failed } = useQRDataUrl(url);
-	const [isDownloading, setIsDownloading] = useState(false);
+	// Which format is being generated, so only the button that was pressed spins.
+	const [downloading, setDownloading] = useState<QrImageFormat | null>(null);
 	const [caption, setCaption] = useCaptionOptions();
 
 	const captionLines = useMemo(
@@ -213,16 +215,16 @@ function QRDialog({
 		[qr, caption],
 	);
 
-	const handleDownload = async () => {
-		setIsDownloading(true);
+	const handleDownload = async (format: QrImageFormat) => {
+		setDownloading(format);
 		try {
 			// Saved via a blob. Previously this was
 			// `<a href={dataUrl} download="qr-<uuid>.png">`: the file was
 			// unidentifiable in a downloads folder, and on iOS Safari a data: URL
 			// tends to navigate in-tab rather than save — destroying this dialog in
 			// the process.
-			const blob = await qrPngBlob(url, captionLines);
-			downloadBlob(blob, qrPngFileName(qr.name));
+			const blob = await qrImageBlob(format, url, captionLines);
+			downloadBlob(blob, qrFileName(qr.name, format));
 		} catch (error) {
 			toast.error(
 				error instanceof Error
@@ -230,7 +232,7 @@ function QRDialog({
 					: t('common.genericError'),
 			);
 		} finally {
-			setIsDownloading(false);
+			setDownloading(null);
 		}
 	};
 
@@ -241,19 +243,26 @@ function QRDialog({
 			title={t('qrCodes.dialogTitle')}
 			className="sm:max-w-sm"
 			footer={
-				<button
-					type="button"
-					onClick={() => void handleDownload()}
-					disabled={!dataUrl || isDownloading}
-					className={cn(btnPrimary, 'w-full')}
-				>
-					{isDownloading ? (
-						<Loader2 className="h-4 w-4 animate-spin" />
-					) : (
-						<Download className="h-4 w-4" />
-					)}
-					{t('qrCodes.downloadButton')}
-				</button>
+				// PNG stays the primary action: it is what most people want, and the
+				// vector form only matters to whoever is assembling the printed piece.
+				<div className="flex w-full flex-col gap-2 sm:flex-row">
+					<DownloadButton
+						format="png"
+						label={t('qrCodes.downloadButton')}
+						busy={downloading === 'png'}
+						disabled={!dataUrl || downloading !== null}
+						onDownload={handleDownload}
+						className={btnPrimary}
+					/>
+					<DownloadButton
+						format="svg"
+						label={t('qrCodes.downloadSvgButton')}
+						busy={downloading === 'svg'}
+						disabled={!dataUrl || downloading !== null}
+						onDownload={handleDownload}
+						className={btnSecondary}
+					/>
+				</div>
 			}
 		>
 			<div className="flex flex-col items-center gap-3">
@@ -331,6 +340,45 @@ function QRDialog({
 				</div>
 			</div>
 		</Modal>
+	);
+}
+
+/**
+ * One of the two format buttons in the dialog footer.
+ *
+ * Extracted only because the pair is otherwise identical markup twice over, and
+ * the spinner-vs-icon swap is the sort of detail that ends up implemented one way
+ * on one button and another way on the other.
+ */
+function DownloadButton({
+	format,
+	label,
+	busy,
+	disabled,
+	onDownload,
+	className,
+}: {
+	format: QrImageFormat;
+	label: string;
+	busy: boolean;
+	disabled: boolean;
+	onDownload: (format: QrImageFormat) => Promise<void>;
+	className: string;
+}) {
+	return (
+		<button
+			type="button"
+			onClick={() => void onDownload(format)}
+			disabled={disabled}
+			className={cn(className, 'flex-1')}
+		>
+			{busy ? (
+				<Loader2 className="h-4 w-4 animate-spin" />
+			) : (
+				<Download className="h-4 w-4" />
+			)}
+			{label}
+		</button>
 	);
 }
 
