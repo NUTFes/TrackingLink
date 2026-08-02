@@ -25,9 +25,12 @@ describe('deriveFallbackKey', () => {
 		expect(deriveFallbackKey('https://example.co.jp/path')).toBe('example');
 	});
 
-	it('lowercases and strips characters the API would reject', () => {
-		// The API accepts ^[a-z0-9][a-z0-9_-]*$, so a suggestion that fails
-		// validation would be a self-inflicted form error.
+	it('lowercases and narrows the host label to a plausible keyword', () => {
+		// The API no longer restricts which characters a keyword may use — it checks
+		// membership in FALLBACK_DESTINATIONS instead. This narrowing stays because
+		// the output is only a *suggestion* matched against that list, and a
+		// suggestion carrying the host's punctuation would never match an entry
+		// anyone wrote by hand.
 		expect(deriveFallbackKey('https://WWW.Insta_Gram.com/')).toBe('insta_gram');
 		expect(deriveFallbackKey('https://my-shop.example.com/')).toBe('my-shop');
 		expect(deriveFallbackKey('https://Insta!Gram.com/')).toBe('instagram');
@@ -40,7 +43,8 @@ describe('deriveFallbackKey', () => {
 	});
 
 	it('does not leave a leading hyphen or underscore', () => {
-		// The rule requires an alphanumeric first character.
+		// Cosmetic now rather than required: a suggestion starting with punctuation
+		// reads like a mistake in the picker even though the API would accept it.
 		expect(deriveFallbackKey('https://_foo.example.com/')).toBe('foo');
 		expect(deriveFallbackKey('https://-foo.example.com/')).toBe('foo');
 	});
@@ -60,8 +64,10 @@ describe('deriveFallbackKey', () => {
 });
 
 describe('qrTargetUrl', () => {
+	const UUID = '550e8400-e29b-41d4-a716-446655440000';
+
 	it('includes the keyword when there is one', () => {
-		expect(qrTargetUrl('abc-123', 'instagram')).toMatch(
+		expect(qrTargetUrl({ id: 'abc-123' }, 'instagram')).toMatch(
 			/\/\?id=abc-123&p=instagram$/,
 		);
 	});
@@ -69,12 +75,49 @@ describe('qrTargetUrl', () => {
 	it('omits &p= entirely when there is no keyword', () => {
 		// A blank `&p=` is payload noise, and the Worker treats missing and blank
 		// identically anyway.
-		expect(qrTargetUrl('abc-123', '')).toMatch(/\/\?id=abc-123$/);
-		expect(qrTargetUrl('abc-123')).toMatch(/\/\?id=abc-123$/);
+		expect(qrTargetUrl({ id: 'abc-123' }, '')).toMatch(/\/\?id=abc-123$/);
+		expect(qrTargetUrl({ id: 'abc-123' })).toMatch(/\/\?id=abc-123$/);
 	});
 
 	it('percent-encodes the keyword', () => {
-		expect(qrTargetUrl('abc', 'a b')).toContain('&p=a%20b');
+		expect(qrTargetUrl({ id: 'abc' }, 'a b')).toContain('&p=a%20b');
+	});
+
+	// The reason the column exists: the short form is 74 characters and a 49x49
+	// symbol, the UUID form 103 and 57x57.
+	it('prefers the short code over the id', () => {
+		expect(
+			qrTargetUrl({ id: UUID, shortCode: 'q7mfe3x' }, 'instagram'),
+		).toMatch(/\/\?id=q7mfe3x&p=instagram$/);
+	});
+
+	it('never puts the id in the URL when a short code is present', () => {
+		const url = qrTargetUrl({ id: UUID, shortCode: 'q7mfe3x' }, 'instagram');
+		expect(url).not.toContain(UUID);
+	});
+
+	it('falls back to the id when there is no short code', () => {
+		// Deliberate, not dead code: the Worker resolves either form, so a long URL
+		// still scans, whereas rendering nothing would produce an unusable poster.
+		// Covers a response from an older API (absent), a row the backfill has not
+		// reached (null), and a blank value.
+		for (const qr of [
+			{ id: UUID },
+			{ id: UUID, shortCode: null },
+			{ id: UUID, shortCode: '' },
+		]) {
+			expect(qrTargetUrl(qr, 'instagram')).toMatch(
+				new RegExp(`/\\?id=${UUID}&p=instagram$`),
+			);
+		}
+	});
+
+	it('leaves a short code unencoded, so the printed URL is the short one', () => {
+		// The alphabet in packages/api/src/short-code.ts is URL-safe precisely so this
+		// interpolation can stay raw; percent-encoding here would add payload back.
+		const url = qrTargetUrl({ id: UUID, shortCode: 'q7mfe3x' });
+		expect(url).toContain('?id=q7mfe3x');
+		expect(url).not.toContain('%');
 	});
 });
 

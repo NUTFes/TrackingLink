@@ -17,7 +17,13 @@
 			"**/worker-configuration.d.ts",
 			// Generated load-test fixtures. `useIgnoreFile` above only reads the root
 			// .gitignore, so the nested one under loadtest/ does not reach biome.
-			"**/loadtest/.out"
+			"**/loadtest/.out",
+			// Throwaway git worktrees created by tooling. They hold a second full
+			// checkout, so without this `pnpm lint` reports another copy of the repo —
+			// often with CRLF diagnostics that do not exist in the real tree, which
+			// reads as "lint is broken" when nothing is wrong. Excluded via
+			// .git/info/exclude rather than .gitignore, and biome reads neither.
+			"**/.claude/worktrees"
 		]
 	},
 	"linter": {

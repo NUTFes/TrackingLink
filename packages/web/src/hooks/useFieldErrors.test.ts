@@ -2,63 +2,64 @@ import { describe, expect, it } from 'vitest';
 import { validateFallbackKey, validateHttpUrl } from './useFieldErrors';
 
 /**
- * The fallback keyword is printed into QR codes, so the set of characters
- * accepted here has to match the API's exactly — a key the form accepts but the
- * API rejects is a save that fails after the user has already decided.
+ * The rule has to match the API's exactly — a keyword the form accepts but the
+ * API rejects is a save that fails after the user has already decided. What the
+ * API checks is membership of FALLBACK_DESTINATIONS, not the characters used: a
+ * well-formed keyword the Worker was never told about resolves to nothing on the
+ * one day the fallback matters.
  */
 describe('validateFallbackKey', () => {
-	const ok = (value: string) => expect(validateFallbackKey(value)).toBeNull();
-	const rejected = (value: string) =>
-		expect(validateFallbackKey(value)).toBe('validation.fallbackKey');
+	// Mirrors wrangler.jsonc, plus a Japanese keyword — configured is configured,
+	// and the old character-set rule would have refused this one outright.
+	const configured = ['instagram', 'web', 'x', 'nut_fes', 'インスタ'];
 
-	it('accepts underscores, which social handles need', () => {
-		// The X account is x.com/nut_fes.
-		ok('nut_fes');
-		ok('a_b_c');
-	});
+	const ok = (
+		value: string,
+		options?: Parameters<typeof validateFallbackKey>[2],
+	) => expect(validateFallbackKey(value, configured, options)).toBeNull();
+	const rejected = (
+		value: string,
+		options?: Parameters<typeof validateFallbackKey>[2],
+	) =>
+		expect(validateFallbackKey(value, configured, options)).toBe(
+			'validation.fallbackKey',
+		);
 
-	it('accepts the existing keywords', () => {
+	it('accepts a keyword that is in the configuration', () => {
 		ok('instagram');
 		ok('web');
-		ok('x');
-		ok('my-shop');
-		ok('a1');
+		// The X account is x.com/nut_fes, so underscores still have to pass.
+		ok('nut_fes');
+		ok('インスタ');
 	});
 
-	// The character class must be written [a-z0-9_-] with the hyphen last.
-	// [a-z0-9-_] parses `9-_` as a range spanning ':' through '_', which would
-	// wave through uppercase and punctuation.
-	it('still rejects everything outside the class', () => {
-		for (const value of [
-			'A',
-			'Insta',
-			'a b',
-			'a.b',
-			'a:b',
-			'a@b',
-			'a^b',
-			'@',
-		]) {
-			rejected(value);
-		}
+	it('rejects a keyword that is not in the configuration', () => {
+		// Every one of these would have passed the old character-set rule and then
+		// silently done nothing during an outage.
+		rejected('my-shop');
+		rejected('a1');
+		rejected('insta');
 	});
 
-	it('requires an alphanumeric first character', () => {
-		rejected('_leading');
-		rejected('-leading');
-		// Trailing is fine — only the first character is constrained.
-		ok('trailing_');
-		ok('trailing-');
+	it('accepts an empty value, which means the site-wide fallback', () => {
+		ok('');
 	});
 
-	it('rejects an empty value', () => {
-		// The field is optional, but blank is handled by not validating at all;
-		// reaching here with '' means a required-field rule was expected.
-		rejected('');
+	it('skips the check when the list could not be loaded', () => {
+		// The field degrades to free text in that state, so there is nothing to
+		// compare against; the server is the real gate.
+		ok('anything-at-all', { listUnavailable: true });
+		ok('インスタ', { listUnavailable: true });
 	});
 
-	it('rejects non-ASCII, which would inflate the printed QR', () => {
-		rejected('インスタ');
+	it('accepts an unchanged stored keyword that is no longer configured', () => {
+		// It is already printed on posters, and refusing it would block an edit to an
+		// unrelated field on that project.
+		ok('gone', { storedKey: 'gone' });
+	});
+
+	it('rejects changing an orphaned keyword to another unconfigured one', () => {
+		rejected('also-gone', { storedKey: 'gone' });
 	});
 });
 

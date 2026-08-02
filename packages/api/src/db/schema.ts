@@ -23,13 +23,22 @@ export const projects = sqliteTable('Projects', {
 });
 
 // QR code *metadata*. The image is never persisted — the web app regenerates it
-// client-side on every view. The row exists because `id` is baked into the
-// printed URL (`/?id=<id>`) and so has to stay stable forever, and because
+// client-side on every view. The row exists because the identifier is baked into
+// the printed URL (`/?id=<...>`) and so has to stay stable forever, and because
 // AccessLogs joins on it.
 export const qrCodes = sqliteTable(
 	'QRCodes',
 	{
 		id: text('id').primaryKey(),
+		// Short stand-in for `id` in the printed URL, which takes the symbol from
+		// 57x57 modules to 49x49 — see ../short-code.ts for the measurements and the
+		// alphabet.
+		//
+		// Nullable because migrations/0004 adds it to existing rows empty and a
+		// separate backfill fills them in; treat it as present everywhere and fall
+		// back to `id` when it is not, since the scan endpoint resolves either. Never
+		// reassign one — it is as printed, and as permanent, as the id.
+		shortCode: text('short_code'),
 		projectId: text('project_id')
 			.notNull()
 			.references(() => projects.projectId, { onDelete: 'cascade' }),
@@ -57,6 +66,9 @@ export const qrCodes = sqliteTable(
 			table.projectId,
 			table.name,
 		),
+		// The backstop behind the create path's collision retry. A duplicate would
+		// point two posters at one row.
+		shortCode: uniqueIndex('idx_qrcodes_short_code').on(table.shortCode),
 	}),
 );
 

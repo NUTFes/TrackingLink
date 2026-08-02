@@ -1,0 +1,48 @@
+-- Adds QRCodes.short_code: a 7-character stand-in for the UUID `id` in the URL a
+-- printed QR code carries.
+--
+-- Background: the scan URL was `/?id=<uuid>&p=<keyword>`. Measured against the
+-- deployed host at error-correction level H:
+--
+--   103 chars  57x57  /?id=550e8400-e29b-41d4-a716-446655440000&p=instagram
+--    74 chars  49x49  /?id=q7mfe3x&p=instagram
+--
+-- Fewer modules means physically larger modules at the same printed size, which
+-- is what decides whether a poster still reads from across a corridor or in bad
+-- light. Nothing else about the app changes.
+--
+-- A NEW COLUMN, not a shorter `id`. AccessLogs.qr_id is a foreign key into
+-- QRCodes(id) with ON DELETE CASCADE, and the id is baked into flyers that are
+-- already on walls — see the comment on the table in schema.sql. Shortening the
+-- id in place would break both. The scan endpoint therefore resolves
+-- `id = ? OR short_code = ?`, so a poster carrying either form keeps working
+-- forever, including after a row has been backfilled with a short code.
+--
+-- THIS MIGRATION AND THE BACKFILL ARE A PAIR — run the backfill immediately
+-- after this file. The column is nullable so that adding it to a populated
+-- database cannot fail, which means every existing row lands here with no code,
+-- and the admin UI shows only the short URL. Rows left un-backfilled fall back to
+-- rendering the long UUID URL, i.e. exactly the symbol size this change exists to
+-- remove:
+--
+--   node scripts/backfill-short-codes.mjs --local
+--   node scripts/backfill-short-codes.mjs --remote
+--
+-- The unique index is what makes the create path's bounded collision retry
+-- meaningful — without it a duplicate code would silently point two posters at
+-- one row. SQLite treats NULLs as distinct in a UNIQUE index, so the rows this
+-- file leaves empty do not collide with each other; that is what allows the
+-- column to be added before the backfill fills it in.
+--
+-- Idempotent? No — re-running errors with "duplicate column name". A brand-new
+-- database does not need this file at all; schema.sql already has the column and
+-- the index.
+--
+-- Apply with:
+--   wrangler d1 execute trackinglink-db --local  --file=./migrations/0004_add_qrcode_short_code.sql
+--   wrangler d1 execute trackinglink-db --remote --file=./migrations/0004_add_qrcode_short_code.sql
+-- Then re-run schema.sql, then run the backfill above.
+
+ALTER TABLE QRCodes ADD COLUMN short_code TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_qrcodes_short_code ON QRCodes(short_code);

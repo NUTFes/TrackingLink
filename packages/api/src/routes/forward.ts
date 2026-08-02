@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, or } from 'drizzle-orm';
 import { type Context, Hono } from 'hono';
 import { getConnInfo } from 'hono/cloudflare-workers';
 import { html } from 'hono/html';
@@ -22,9 +22,13 @@ const reportedMissingKeywords = new Set<string>();
 // GET /?id=<qrId>&p=<fallbackKey> — scan a QR code: look it up, log the access,
 // redirect.
 //
+// `id` is either a QRCodes.id (a UUID, on flyers printed before short codes
+// existed) or a QRCodes.short_code. Both are accepted for the lifetime of the
+// app: paper cannot be reissued, so neither form may ever stop resolving.
+//
 // This is the only hot path in the app: every person who scans a printed poster
-// goes through it, in bursts. It is deliberately one D1 read (a primary-key
-// lookup) on the critical path — see the join and the waitUntil below.
+// goes through it, in bursts. It is deliberately one D1 read on the critical path
+// — see the join and the waitUntil below.
 forwardApp.get('/', async (c) => {
 	const { id, p: fallbackKey } = c.req.query();
 	const userAgent = c.req.header('User-Agent') || 'unknown';
@@ -41,6 +45,13 @@ forwardApp.get('/', async (c) => {
 	// fallback.
 	let target:
 		| {
+				/**
+				 * The row's own id, which is not necessarily what was scanned. The
+				 * access-log insert below needs this rather than the query parameter:
+				 * AccessLogs.qr_id is a foreign key into QRCodes(id), so writing a
+				 * short code there would fail the constraint and lose the scan.
+				 */
+				id: string;
 				projectId: string;
 				location: string;
 				projectName: string | null;
@@ -64,6 +75,7 @@ forwardApp.get('/', async (c) => {
 		// the two 404 branches below rely on.
 		target = await db
 			.select({
+				id: schema.qrCodes.id,
 				projectId: schema.qrCodes.projectId,
 				location: schema.qrCodes.location,
 				projectName: schema.projects.name,
@@ -74,7 +86,13 @@ forwardApp.get('/', async (c) => {
 				schema.projects,
 				eq(schema.qrCodes.projectId, schema.projects.projectId),
 			)
-			.where(eq(schema.qrCodes.id, id))
+			// One OR rather than a shape test on `id`, and rather than a second query.
+			// A shape test ("36 chars with hyphens is a UUID") would be wrong: ids are
+			// arbitrary TEXT, and the load-test harness seeds them as `lt-qr-001-001`.
+			// A second query would double the subrequests on the hottest path in the
+			// app. Both columns are indexed — id is the primary key, short_code has a
+			// unique index — so this stays two index probes, not a scan.
+			.where(or(eq(schema.qrCodes.id, id), eq(schema.qrCodes.shortCode, id)))
 			.get();
 	} catch (error) {
 		dbUnavailable = true;
@@ -122,7 +140,10 @@ forwardApp.get('/', async (c) => {
 	const write = db
 		.insert(schema.accessLogs)
 		.values({
-			qrId: id,
+			// target.id, not the scanned `id`: the latter may be a short code, which
+			// the qr_id foreign key would reject. Logging the row's own id also keeps
+			// scan history joinable regardless of which URL form was printed.
+			qrId: target.id,
 			projectId: target.projectId,
 			accessedAt: new Date().toISOString(),
 			userAgent,

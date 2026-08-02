@@ -31,11 +31,29 @@ CREATE TABLE IF NOT EXISTS Projects (
 
 -- QR code *metadata*. The QR image itself is never stored: the web app renders
 -- it client-side on every view (see useQRDataUrl in QRCodesPage.tsx). A row
--- exists because the id is baked into the printed URL (`/?id=<id>`), so it has
--- to be stable forever — regenerating it would break already-posted flyers —
--- and because AccessLogs joins on it to attribute scans to a medium/location.
+-- exists because the identifier is baked into the printed URL (`/?id=<...>`), so
+-- it has to be stable forever — regenerating it would break already-posted
+-- flyers — and because AccessLogs joins on it to attribute scans to a
+-- medium/location.
+--
+-- Two columns can address a row: `id` and `short_code`. New QR codes are printed
+-- with the short code; flyers printed before it existed carry the id. The scan
+-- endpoint accepts either, and neither is ever reassigned.
 CREATE TABLE IF NOT EXISTS QRCodes (
     id TEXT PRIMARY KEY,
+    -- What new QR codes put in the printed URL, in place of the 36-character id:
+    -- `/?id=q7mfe3x&p=instagram` is 74 characters and encodes as a 49x49 symbol,
+    -- against 103 characters and 57x57 for the id. Bigger modules at the same
+    -- printed size is the entire benefit. 7 characters from a 32-character
+    -- alphabet that omits 0, 1, l and o, so a code survives being read aloud, and
+    -- lowercase only because TEXT comparison here is case-sensitive.
+    --
+    -- Nullable only so migrations/0004 can add it to a populated database without
+    -- inventing values in SQL. Every row is expected to carry one — the migration
+    -- is paired with scripts/backfill-short-codes.mjs, which fills in the rows
+    -- that predate the column. Never overwrite one: it is as printed, and as
+    -- permanent, as the id.
+    short_code TEXT,
     -- What the QR code is printed on, e.g. "造形大ポスター". Unique per project:
     -- one QR code per physical item.
     name TEXT NOT NULL,
@@ -73,6 +91,13 @@ CREATE INDEX IF NOT EXISTS idx_qrcodes_project_id ON QRCodes(project_id);
 -- QR code for a poster that already has one, and keeps the download filename
 -- (built from the name) unique.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_qrcodes_project_name ON QRCodes(project_id, name);
+
+-- A short code is what a scan resolves against, so a duplicate would attribute
+-- two posters' scans to one row and send some visitors to the wrong project. Also
+-- the backstop the create path's collision retry relies on. NULLs count as
+-- distinct in a SQLite UNIQUE index, which is what lets migrations/0004 add the
+-- column before the backfill populates it.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_qrcodes_short_code ON QRCodes(short_code);
 
 -- Serves both the access-log list and the CSV export, which filter by
 -- project_id and order by accessed_at DESC — the leading column also covers

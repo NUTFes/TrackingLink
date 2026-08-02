@@ -1,5 +1,7 @@
 import {
 	ArrowLeft,
+	Check,
+	Copy,
 	Download,
 	Loader2,
 	Pencil,
@@ -33,6 +35,7 @@ import { useTranslation } from '../lib/i18n';
 import {
 	QR_CAPTION_DEFAULTS,
 	type QrCaptionOptions,
+	type QrLinkIdentity,
 	deriveFallbackKey,
 	qrCaptionLines,
 	qrPngBlob,
@@ -54,6 +57,13 @@ import { cn } from '../lib/utils';
 
 interface QRCodeRecord {
 	id: string;
+	/**
+	 * What goes in the printed URL. Absent on responses from an older API, null on
+	 * a row the backfill has not reached — qrTargetUrl falls back to `id` in both
+	 * cases. Never shown on its own: the id is an implementation detail, and the
+	 * only identifier a user needs to see is the scan URL.
+	 */
+	shortCode?: string | null;
 	projectId: string;
 	name: string;
 	medium: string;
@@ -108,12 +118,14 @@ function useQRDataUrl(text: string | null) {
  * announcing the image again would just be noise.
  */
 function QRThumbnail({
-	qrId,
+	qr: { id, shortCode },
 	fallbackKey,
-}: { qrId: string; fallbackKey: string }) {
+}: { qr: QrLinkIdentity; fallbackKey: string }) {
+	// The thumbnail has to encode the same URL as the dialog and the download, or
+	// it would be a preview of a different QR code than the one being printed.
 	const url = useMemo(
-		() => qrTargetUrl(qrId, fallbackKey),
-		[qrId, fallbackKey],
+		() => qrTargetUrl({ id, shortCode }, fallbackKey),
+		[id, shortCode, fallbackKey],
 	);
 	const { dataUrl } = useQRDataUrl(url);
 	return (
@@ -189,8 +201,8 @@ function QRDialog({
 	const { t } = useTranslation();
 	const toast = useToast();
 	const url = useMemo(
-		() => qrTargetUrl(qr.id, fallbackKey),
-		[qr.id, fallbackKey],
+		() => qrTargetUrl(qr, fallbackKey),
+		[qr.id, qr.shortCode, fallbackKey],
 	);
 	const { dataUrl, failed } = useQRDataUrl(url);
 	const [isDownloading, setIsDownloading] = useState(false);
@@ -310,12 +322,68 @@ function QRDialog({
 					<p className="mb-1 text-xs font-medium text-muted-foreground">
 						{t('qrCodes.scanUrlLabel')}
 					</p>
-					<p className="break-all rounded bg-muted/50 p-2 text-center font-mono text-xs">
-						{url}
-					</p>
+					<div className="flex items-stretch gap-1.5">
+						<p className="min-w-0 flex-1 break-all rounded bg-muted/50 p-2 text-center font-mono text-xs">
+							{url}
+						</p>
+						<CopyButton value={url} />
+					</div>
 				</div>
 			</div>
 		</Modal>
+	);
+}
+
+/**
+ * Copies `value` and says so.
+ *
+ * The URL is the one thing on this screen someone needs elsewhere — pasted into a
+ * chat to ask a colleague to test a poster, or into a phone to check the redirect.
+ * Selecting a wrapped 70-character monospace string by hand is where that goes
+ * wrong, and a half-selected URL fails in a way that looks like a broken QR code.
+ *
+ * navigator.clipboard needs a secure context, which http://localhost satisfies but
+ * a plain-http LAN address does not — so the failure path is real, not defensive
+ * padding, and it has to say something rather than appear to have worked.
+ */
+function CopyButton({ value }: { value: string }) {
+	const { t } = useTranslation();
+	const toast = useToast();
+	const [copied, setCopied] = useState(false);
+
+	// Cleared on unmount so the tick cannot fire into a closed dialog.
+	useEffect(() => {
+		if (!copied) return;
+		const timer = window.setTimeout(() => setCopied(false), 2000);
+		return () => window.clearTimeout(timer);
+	}, [copied]);
+
+	const handleCopy = async () => {
+		try {
+			if (!navigator.clipboard) throw new Error('Clipboard API unavailable');
+			await navigator.clipboard.writeText(value);
+			setCopied(true);
+		} catch {
+			toast.error(t('qrCodes.copyFailed'));
+		}
+	};
+
+	return (
+		<button
+			type="button"
+			onClick={() => void handleCopy()}
+			// The label carries the state; the icon alone would leave a screen-reader
+			// user with no confirmation that anything happened.
+			aria-label={copied ? t('qrCodes.copied') : t('qrCodes.copyUrl')}
+			title={copied ? t('qrCodes.copied') : t('qrCodes.copyUrl')}
+			className={cn(btnSecondary, 'shrink-0 px-2.5', copied && 'text-primary')}
+		>
+			{copied ? (
+				<Check className="h-4 w-4" aria-hidden="true" />
+			) : (
+				<Copy className="h-4 w-4" aria-hidden="true" />
+			)}
+		</button>
 	);
 }
 
@@ -624,10 +692,7 @@ function QRCodesContent() {
 								className="p-4 transition-colors hover:bg-muted/30"
 							>
 								<div className="flex items-start gap-3">
-									<QRThumbnail
-										qrId={qr.id}
-										fallbackKey={effectiveFallbackKey}
-									/>
+									<QRThumbnail qr={qr} fallbackKey={effectiveFallbackKey} />
 									<div className="min-w-0 flex-1">
 										<div className="flex items-start justify-between gap-2">
 											<p className="break-words text-sm font-medium leading-snug">

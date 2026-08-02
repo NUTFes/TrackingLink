@@ -60,6 +60,10 @@ const en: Dictionary = {
 		'That QR code no longer exists. It may have been deleted.',
 	'error.duplicateName':
 		'A QR code with this name already exists in this project.',
+	'error.fallbackKeyNotConfigured':
+		'“{fallbackKey}” is not in the Worker configuration, so it cannot be saved. Pick a configured keyword, or leave it blank.',
+	'error.shortCodeUnavailable':
+		'Could not allocate a short code for this QR code. Please try again.',
 	'error.tooManyRows':
 		'Too many rows ({total}) to export at once. The limit is {max} — narrow the date range.',
 	'error.rateLimited': 'Too many attempts. Please wait a moment and try again.',
@@ -69,7 +73,7 @@ const en: Dictionary = {
 	'validation.tooLong': 'Please use {max} characters or fewer.',
 	'validation.url': 'Enter a URL starting with http:// or https://',
 	'validation.fallbackKey':
-		'Use lowercase letters, digits, hyphens and underscores only, starting with a letter or digit.',
+		'That keyword is not in the Worker configuration. Pick one from the list, or leave it blank to use the site-wide fallback.',
 
 	'login.sessionExpired': 'Your session expired. Please sign in again.',
 	'login.retryAfterNetwork':
@@ -172,6 +176,10 @@ const en: Dictionary = {
 	'qrCodes.dialogTitle': 'QR code',
 	'qrCodes.imageAlt': 'QR code for {name}',
 	'qrCodes.scanUrlLabel': 'This code links to',
+	'qrCodes.copyUrl': 'Copy this link',
+	'qrCodes.copied': 'Copied',
+	'qrCodes.copyFailed':
+		'Could not copy. Copying needs an https or localhost address — select the link and copy it by hand.',
 	'qrCodes.generateFailed': 'Failed to generate the QR code',
 	'qrCodes.downloadButton': 'Download PNG',
 	'qrCodes.scanCount': '{count} scans',
@@ -230,6 +238,10 @@ const ja: Dictionary = {
 	'error.qrNotFound':
 		'このQRコードは存在しません。削除された可能性があります。',
 	'error.duplicateName': 'この名前のQRコードはこのプロジェクトに既にあります。',
+	'error.fallbackKeyNotConfigured':
+		'「{fallbackKey}」はWorkerの設定にないため保存できません。設定済みのキーワードを選ぶか、空欄にしてください。',
+	'error.shortCodeUnavailable':
+		'短縮コードを発行できませんでした。もう一度お試しください。',
 	'error.tooManyRows':
 		'件数が多すぎます（{total}件）。一度に出力できるのは{max}件までです。期間を絞ってください。',
 	'error.rateLimited':
@@ -240,7 +252,7 @@ const ja: Dictionary = {
 	'validation.tooLong': '{max}文字以内で入力してください。',
 	'validation.url': 'http:// または https:// で始まるURLを入力してください。',
 	'validation.fallbackKey':
-		'半角の英小文字・数字・ハイフン・アンダーバーのみ、先頭は英数字で入力してください。',
+		'このキーワードはWorkerの設定にありません。一覧から選ぶか、空欄にして全体のフォールバック先を使ってください。',
 
 	'login.sessionExpired':
 		'セッションの有効期限が切れました。再度ログインしてください。',
@@ -344,6 +356,10 @@ const ja: Dictionary = {
 	'qrCodes.dialogTitle': 'QRコード',
 	'qrCodes.imageAlt': '「{name}」のQRコード',
 	'qrCodes.scanUrlLabel': 'このコードの転送先',
+	'qrCodes.copyUrl': 'このリンクをコピー',
+	'qrCodes.copied': 'コピーしました',
+	'qrCodes.copyFailed':
+		'コピーできませんでした。コピーには https か localhost のアドレスが必要です。リンクを選択して手動でコピーしてください。',
 	'qrCodes.generateFailed': 'QRコードの生成に失敗しました',
 	'qrCodes.downloadButton': 'PNGをダウンロード',
 	'qrCodes.scanCount': '{count} 回',
