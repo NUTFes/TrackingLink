@@ -38,7 +38,32 @@ QRコード/リンクのアクセスを記録し、リダイレクトするた�
 | Worker URL | `https://trackinglink.nutfes-nutmeg9488.workers.dev` |
 | Cloudflare Workerプロジェクト名 | `trackinglink` |
 | D1データベース名 | `trackinglink-db` |
-| デプロイ方法 | Cloudflareダッシュボード連携(Workers Builds)。`main`ブランチにpushすると自動デプロイ |
+| デプロイ方法 | ローカルから `pnpm deploy:api` を実行して手動デプロイ |
+
+### デプロイ
+
+リポジトリのルートで以下を実行します。
+
+```bash
+pnpm deploy:api
+```
+
+これは [`packages/api/scripts/deploy.mjs`](packages/api/scripts/deploy.mjs) を経由して `wrangler deploy --minify` を実行し、
+あわせて**現在のコミットを `GIT_SHA` としてWorkerに埋め込みます**。作業ツリーに未コミットの変更がある場合は
+`c7d34cd-dirty` のように `-dirty` が付き、稼働中のコードがそのコミットと同一でないことが分かるようになっています。
+
+### ヘルスチェック
+
+| エンドポイント | 内容 |
+| --- | --- |
+| `GET /healthz` | Liveness。DBには触れず `{"ok":true,"version":"<GIT_SHA>"}` を返す。`version` で稼働中のコミットを確認できる(未設定時は `dev`) |
+| `GET /readyz` | Readiness。`SELECT 1` でD1への到達性まで確認し、失敗時は `503` を返す |
+
+外部監視サービス(UptimeRobotなど)は `/healthz` に向けてください。`/readyz` を1分間隔で叩いても
+約1,440読み取り/日で、D1の500万読み取り/日に対して無視できる量です。
+
+**`GET /` を監視先にしないこと。** ここはQRコードのリダイレクト用で、`?id=` が無いと404を返すため、
+監視に使うとアラートが鳴り続けます。
 
 APIの設定・認証情報は以下の2種類に分かれています。
 
